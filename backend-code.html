@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backend code · RCP Trace Guide</title>
+<meta name="description" content="Appendix B of the RCP Trace Guide: every API route and server helper, with request handling, validation, transactions, and security explained.">
+<script src="auth-gate.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 14 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+<a href="frontend-code.html"><span class="stack-nav__no">A</span>Frontend code</a>
+<a href="backend-code.html" aria-current="page"><span class="stack-nav__no">B</span>Backend code</a>
+<a href="sql-code-map.html"><span class="stack-nav__no">C</span>SQL ↔ code map</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace trace--wide" id="main">
+<p class="trace__crumb">APPENDIX <b>B</b> / backend code</p>
+<p class="kicker">Appendix B · Backend code</p>
+<h1>Every API route and server helper, explained.</h1>
+<p class="lede">This page is the backend reading guide. It follows a request through API route files, security checks, validation, service helpers, transactions, and database writes. Use it with Appendix C when you want the exact SQL objects behind each helper. Blocks labeled as teaching sketches are shortened on purpose.</p>
+
+<section class="step">
+<h2>The backend rule</h2>
+<p>Backend code lives in two places: <code>src/app/api/**/route.ts</code> receives HTTP requests, and <code>src/server/*.ts</code> owns business logic and database access. Route files should stay thin; server helpers do the real work.</p>
+<div class="callout breakpoint"><p class="callout__tag">Backend boundary</p><p>Only backend/server code imports <code>oracledb</code>, reads environment variables, hashes passwords, creates cookies, or executes SQL. Client components call the backend through HTTP.</p></div>
+</section>
+
+<section class="step">
+<h2>Oracle connection helper</h2>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/db-core.ts</span><span class="code-frame__lines">teaching sketch from lines 97-124</span></figcaption>
+<pre><code class="language-ts">export async function query&lt;T&gt;(sql: string, binds: oracledb.BindParameters = {}): Promise&lt;T[]&gt; {
+  const db = await connection()
+  try {
+    const result = await db.execute&lt;T&gt;(sql, binds, { outFormat: oracledb.OUT_FORMAT_OBJECT })
+    return result.rows ?? []
+  } finally {
+    await db.close()
+  }
+}
+
+export async function withTransaction&lt;T&gt;(work: (connection: oracledb.Connection) =&gt; Promise&lt;T&gt;): Promise&lt;T&gt; {
+  const db = await connection()
+  try {
+    const result = await work(db)
+    await db.commit()
+    return result
+  } catch (error) {
+    await db.rollback()
+    throw error
+  } finally {
+    await db.close()
+  }
+}</code></pre>
+</figure>
+<p><code>query()</code> is for reads. <code>withTransaction()</code> is for mutations that must commit together or roll back together. This is the Node equivalent of a JDBC helper around <code>DataSource</code>, <code>PreparedStatement</code>, <code>commit()</code>, and <code>rollback()</code>.</p>
+</section>
+
+<section class="step">
+<h2>Auth helper shape</h2>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/auth.ts</span><span class="code-frame__lines">teaching sketch from lines 66-100</span></figcaption>
+<pre><code class="language-ts">export async function registerAccount(input: unknown) {
+  const account = validateRegistration(input)
+  const passwordHash = await hashPassword(account.password)
+  const token = randomBytes(32).toString('base64url')
+  const tokenDigest = tokenHash(token)
+
+  const user = await withTransaction(async (connection) =&gt; {
+    const result = await connection.execute(
+      `INSERT INTO RESEARCHER_PROFILE (...) VALUES (...) RETURNING researcher_id INTO :researcherId`,
+      { email: account.email, passwordHash, role: account.role, fullName: account.fullName, researcherId: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER } },
+    )
+    await connection.execute(
+      'INSERT INTO USER_SESSION (...) VALUES (...)',
+      { researcherId, tokenHash: tokenDigest, expiresAt },
+    )
+    return { researcherId, email: account.email, fullName: account.fullName, role: account.role }
+  })
+  return { user, token, expiresAt }
+}</code></pre>
+</figure>
+<p>Registration validates untrusted input, hashes the password, creates a random session token, stores only the token hash in Oracle, and returns the raw token only once so the route can set the cookie.</p>
+</section>
+
+<section class="step">
+<h2>Every API route</h2>
+<div class="tablewrap"><table class="extra-wide-table">
+<thead><tr><th>Route file</th><th>HTTP methods</th><th>Security/checks</th><th>Server helper called</th></tr></thead>
+<tbody>
+<tr><td><code>api/auth/register/route.ts</code></td><td>POST</td><td>Origin check, body limit, JSON parse, IP/email rate limits.</td><td><code>registerAccount()</code>, <code>setSessionCookie()</code>.</td></tr>
+<tr><td><code>api/auth/login/route.ts</code></td><td>POST</td><td>Origin check, body limit, JSON parse, IP/account rate limits.</td><td><code>login()</code>, <code>setSessionCookie()</code>.</td></tr>
+<tr><td><code>api/auth/logout/route.ts</code></td><td>POST</td><td>Origin check and cookie lookup.</td><td><code>logout()</code>, <code>clearSessionCookie()</code>.</td></tr>
+<tr><td><code>api/health/route.ts</code></td><td>GET</td><td>No session; public smoke check.</td><td><code>query('SELECT 1 AS health FROM dual')</code>.</td></tr>
+<tr><td><code>api/universities</code>, <code>research-areas</code>, <code>skills</code></td><td>GET</td><td>Public reference reads.</td><td><code>listUniversities()</code>, <code>listResearchAreas()</code>, <code>listSkills()</code>.</td></tr>
+<tr><td><code>api/researchers</code>, <code>api/publications/search</code></td><td>GET</td><td>Validated sort/page/filter params.</td><td><code>searchResearchers()</code>, <code>searchPublications()</code>.</td></tr>
+<tr><td><code>api/profile/me</code></td><td>GET, PATCH</td><td>Requires session; PATCH also checks origin/body.</td><td><code>getOwnProfile()</code>, <code>updateOwnProfile()</code>.</td></tr>
+<tr><td><code>api/publications</code>, <code>api/publications/[id]</code></td><td>GET, POST, PATCH, DELETE</td><td>Requires session for own list/create/update/delete; owner/admin checks in helper.</td><td><code>listPublications()</code>, <code>createPublication()</code>, <code>updatePublication()</code>, <code>deactivatePublication()</code>.</td></tr>
+<tr><td><code>api/import/doi</code>, <code>api/import/publications</code>, <code>api/openalex/author</code></td><td>GET, POST</td><td>Requires session; import routes rate-limit user activity.</td><td>OpenAlex preview/import helpers.</td></tr>
+<tr><td><code>api/connections</code></td><td>GET, POST, PATCH</td><td>Requires session; action-specific validation.</td><td><code>listConnections()</code>, <code>sendConnection()</code>, response/cancel/remove helpers.</td></tr>
+<tr><td><code>api/posts</code>, <code>api/posts/[id]</code></td><td>GET, POST, PATCH</td><td>Requires session for own writes; public GET can list open posts.</td><td><code>listPosts()</code>, <code>createPost()</code>, <code>updatePost()</code>, <code>publishPost()</code>, <code>closePost()</code>.</td></tr>
+<tr><td><code>api/posts/[id]/applications</code></td><td>GET, POST</td><td>Requires session; validates post/applicant/publications.</td><td><code>listApplicationsForPost()</code>, <code>submitApplication()</code>.</td></tr>
+<tr><td><code>api/applications/[id]/status</code></td><td>PATCH</td><td>Requires session; owner/reviewer rules in helper.</td><td>Review/withdraw application helpers.</td></tr>
+<tr><td><code>api/notifications</code></td><td>GET, PATCH</td><td>Requires session.</td><td><code>listNotifications()</code>, mark-read helpers.</td></tr>
+<tr><td><code>api/admin/users/[id]/status</code>, <code>api/admin/posts/[id]/moderation</code></td><td>PATCH</td><td>Requires admin session.</td><td><code>setAccountStatus()</code>, <code>moderatePost()</code>.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Every backend helper</h2>
+<div class="tablewrap"><table class="extra-wide-table">
+<thead><tr><th>File</th><th>Main functions</th><th>What to read for</th><th>SQL category</th></tr></thead>
+<tbody>
+<tr><td><code>db-core.ts</code></td><td><code>getOraclePool</code>, <code>query</code>, <code>withTransaction</code></td><td>Pool config, wallet handling, schema selection, transaction wrapper.</td><td>All runtime SQL.</td></tr>
+<tr><td><code>auth.ts</code></td><td>register, login, session lookup, logout, cookies.</td><td>Input validation, password hash use, session-token hash storage.</td><td>Profile/session SQL.</td></tr>
+<tr><td><code>passwords.ts</code></td><td><code>hashPassword</code>, <code>verifyPassword</code></td><td>Scrypt hash format and timing-safe verification.</td><td>No SQL.</td></tr>
+<tr><td><code>http.ts</code></td><td>safe error, body size, client IP, origin guard.</td><td>Shared API hardening.</td><td>No SQL.</td></tr>
+<tr><td><code>rate-limit.ts</code></td><td><code>checkRateLimit</code></td><td>In-memory request buckets; current first-hit caveat remains documented.</td><td>No SQL.</td></tr>
+<tr><td><code>validation.ts</code></td><td>Email/DOI/whitespace normalization.</td><td>Small trust-boundary cleanup before SQL.</td><td>No SQL.</td></tr>
+<tr><td><code>search.ts</code></td><td>Directory search wrappers.</td><td>Sort allow-lists, pagination, PL/SQL ref cursor calls.</td><td>Package calls.</td></tr>
+<tr><td><code>profile.ts</code></td><td>Public profile, own profile, update profile, references.</td><td>Privacy rules and many-to-many replacement.</td><td>Profile/reference/join SQL.</td></tr>
+<tr><td><code>publications.ts</code></td><td>Create/update/deactivate/list/detail publications.</td><td>Owner/admin checks, publication graph writes.</td><td>Publication graph SQL.</td></tr>
+<tr><td><code>imports.ts</code>, <code>integrations/openalex.ts</code></td><td>DOI/author preview/import and external fetch.</td><td>Duplicate detection and external metadata normalization.</td><td>Publication import SQL plus OpenAlex HTTP.</td></tr>
+<tr><td><code>posts.ts</code></td><td>Create/update/publish/close/list/get posts.</td><td>Requirement validation and workflow state changes.</td><td>Post and requirement SQL.</td></tr>
+<tr><td><code>applications.ts</code></td><td>Submit/review/withdraw/list applications.</td><td>Post locks, ownership checks, status transitions.</td><td>Application SQL.</td></tr>
+<tr><td><code>connections.ts</code></td><td>Send/respond/cancel/remove/list connections.</td><td>Pair workflow and notification side effects.</td><td>Connection SQL.</td></tr>
+<tr><td><code>notifications.ts</code></td><td>Create/list/mark-read notifications.</td><td>Notification inserts and inbox rendering data.</td><td>Notification SQL.</td></tr>
+<tr><td><code>matching.ts</code></td><td>Recommended posts, similar researchers.</td><td>Area/skill overlap scoring.</td><td>Matching SELECTs.</td></tr>
+<tr><td><code>dashboard.ts</code></td><td>Researcher/admin metrics.</td><td>Aggregate counts for workspace cards.</td><td>Aggregate SELECTs.</td></tr>
+<tr><td><code>admin.ts</code></td><td>Moderate users/posts.</td><td>Admin-only locked updates and audit rows.</td><td>Moderation SQL.</td></tr>
+<tr><td><code>markdown-researcher-import.ts</code></td><td>Markdown import parser.</td><td>Offline import support for researcher seed/source material.</td><td>Parser support; runtime importer scripts do SQL.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Backend safety checklist</h2>
+<div class="tablewrap"><table class="wide-table">
+<thead><tr><th>Safety point</th><th>Where implemented</th><th>Why it matters</th></tr></thead>
+<tbody>
+<tr><td>Untrusted input validation</td><td>Route files plus server helper validation.</td><td>Rejects bad data before it reaches business logic or SQL constraints.</td></tr>
+<tr><td>Oracle named binds</td><td>All runtime SQL helpers.</td><td>Prevents SQL injection for values.</td></tr>
+<tr><td>Sort allow-lists</td><td><code>search.ts</code>.</td><td>Identifiers cannot be bind values, so accepted sort names are enumerated.</td></tr>
+<tr><td>Transactions</td><td><code>withTransaction()</code>.</td><td>Parent/child writes commit together or rollback together.</td></tr>
+<tr><td>Row locks</td><td><code>SELECT ... FOR UPDATE</code> in workflow helpers.</td><td>Prevents concurrent requests from racing a status change.</td></tr>
+<tr><td>Least privilege</td><td><code>database/04_security.sql</code>.</td><td>The runtime user can run the app, not rebuild the schema.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="frontend-code.html"><small>◀ Appendix A</small> Frontend code</a>
+<a class="pager__btn" href="sql-code-map.html">Next: SQL-code map <small>Appendix C ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>How the web works · RCP Trace Guide</title>
 <meta name="description" content="Trace 01 of the RCP Trace Guide: HTTP, clients, servers, and the vocabulary, for programmers who know Java and C++ but not the web.">
+<script src="auth-gate.js"></script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -13,7 +14,7 @@
 <div class="shell">
 <aside class="stack-nav">
 <a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
-<p class="stack-nav__label">Call stack · 13 frames</p>
+<p class="stack-nav__label">Call stack · 14 frames</p>
 <nav aria-label="Trace steps">
 <a href="index.html" aria-current="page"><span class="stack-nav__no">01</span>How the web works</a>
 <a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
@@ -26,8 +27,9 @@
 <a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
 <a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
 <a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
-<a href="sql-reference.html"><span class="stack-nav__no">A</span>All SQL</a>
-<a href="website-reference.html"><span class="stack-nav__no">B</span>All website code</a>
+<a href="frontend-code.html"><span class="stack-nav__no">A</span>Frontend code</a>
+<a href="backend-code.html"><span class="stack-nav__no">B</span>Backend code</a>
+<a href="sql-code-map.html"><span class="stack-nav__no">C</span>SQL ↔ code map</a>
 </nav>
 <p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
 </aside>
@@ -122,7 +124,7 @@ Content-Type: text/html; charset=utf-8
 
 <section class="step">
 <h2>How to use this guide</h2>
-<p>Eleven traces plus two appendices, each one a path through the stack. Every code block names its real file and line range in the <a href="https://github.com/MantakaMahir/research-collaboration-platform">RCP repository</a>: open the repo beside this page and read along. The sidebar is your call stack; the numbered steps on each page are the debugger stepping through one concern at a time.</p>
+<p>Eleven traces plus three focused appendices, each one a path through the stack. Every code block names its real file and line range in the <a href="https://github.com/MantakaMahir/research-collaboration-platform">RCP repository</a>: open the repo beside this page and read along. The sidebar is your call stack; the numbered steps on each page are the debugger stepping through one concern at a time.</p>
 <ul class="syllabus">
 <li><a href="index.html" aria-current="page"><span class="syllabus__no">TRACE 01</span><strong>How the web works</strong><span>Clients, servers, HTTP, and the vocabulary.</span></a></li>
 <li><a href="architecture.html"><span class="syllabus__no">TRACE 02</span><strong>The architecture</strong><span>Where every file lives and who is allowed to call whom.</span></a></li>
@@ -135,8 +137,9 @@ Content-Type: text/html; charset=utf-8
 <li><a href="features.html"><span class="syllabus__no">TRACE 09</span><strong>A feature end to end</strong><span>Research posts: create, publish, close, notify.</span></a></li>
 <li><a href="testing.html"><span class="syllabus__no">TRACE 10</span><strong>Testing</strong><span>Unit tests, integration tests, and the SQL harness.</span></a></li>
 <li><a href="deployment.html"><span class="syllabus__no">TRACE 11</span><strong>Deployment</strong><span>Local dev, the cloud wallet, and going live.</span></a></li>
-<li><a href="sql-reference.html"><span class="syllabus__no">APPENDIX A</span><strong>All SQL</strong><span>Every schema script, DDL/DML/PLSQL block, runtime query source, and SQL test.</span></a></li>
-<li><a href="website-reference.html"><span class="syllabus__no">APPENDIX B</span><strong>All website code</strong><span>Every page, component, API route, user flow, security boundary, and deployment behavior.</span></a></li>
+<li><a href="frontend-code.html"><span class="syllabus__no">APPENDIX A</span><strong>Frontend code</strong><span>Every React page, client component, frontend pattern, and API call from the UI.</span></a></li>
+<li><a href="backend-code.html"><span class="syllabus__no">APPENDIX B</span><strong>Backend code</strong><span>Every API route, server helper, validation layer, transaction, and security check.</span></a></li>
+<li><a href="sql-code-map.html"><span class="syllabus__no">APPENDIX C</span><strong>SQL ↔ code map</strong><span>How screens, routes, backend helpers, SQL queries, tables, views, triggers, and packages connect.</span></a></li>
 </ul>
 </section>
 

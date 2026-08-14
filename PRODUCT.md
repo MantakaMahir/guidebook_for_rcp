@@ -28,9 +28,9 @@ Read at `https://mantakamahir.github.io/guidebook_for_rcp/` during team learning
 
 ## Capabilities and Constraints
 
-- 11-page fixed spine: web basics → architecture → frontend → backend → Node↔Oracle → schema → PL/SQL → security → features → testing → deployment.
-- All code excerpts are verbatim from the RCP repo, escaped into HTML, with `file:line` provenance.
-- No JavaScript frameworks, no server, no cookies; works offline after first load (vendor assets stored locally).
+- 14-page focused spine: web basics → architecture → frontend → backend → Node↔Oracle → schema → PL/SQL → security → features → testing → deployment → frontend code → backend code → SQL-code map.
+- Code excerpts are verbatim from the RCP repo unless explicitly labeled as a teaching sketch; every block still points to the source file and line area.
+- No JavaScript frameworks, no server, no cookies; a small static password gate uses sessionStorage; works offline after first load (vendor assets stored locally).
 - Code blocks must stay legible at desktop widths next to an editor; horizontal scroll acceptable, wrapping is not.
 
 ## Brand Commitments

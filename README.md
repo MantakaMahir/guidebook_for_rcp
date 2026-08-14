@@ -6,7 +6,7 @@ Live: https://mantakamahir.github.io/guidebook_for_rcp/
 
 ## What this is
 
-Eleven traces plus two appendices, each following or indexing one path through the system:
+Eleven traces plus three focused appendices, each following one path through the system:
 
 | Trace | Page | Topic |
 |---|---|---|
@@ -21,14 +21,15 @@ Eleven traces plus two appendices, each following or indexing one path through t
 | 09 | `features.html` | Research posts end to end |
 | 10 | `testing.html` | Unit, integration, and SQL harness |
 | 11 | `deployment.html` | Local dev, wallet, Vercel + Oracle Cloud |
-| A | `sql-reference.html` | All SQL scripts, DDL, DML, PL/SQL, grants, tests, and runtime SQL sources |
-| B | `website-reference.html` | All frontend pages, components, API routes, user flows, security, and deployment behavior |
+| A | `frontend-code.html` | Frontend pages, client components, UI patterns, and API calls |
+| B | `backend-code.html` | API routes, server helpers, validation, security checks, and transactions |
+| C | `sql-code-map.html` | How frontend screens and backend helpers connect to SQL objects |
 
 Audience: programmers comfortable with C/C++/Java and DBMS basics but new to web development. Every snippet is taken verbatim from [research-collaboration-platform](https://github.com/MantakaMahir/research-collaboration-platform) with file and line references.
 
 ## Tech
 
-Plain static HTML + one stylesheet + vendored highlight.js and Geist font. No build step, no framework, no cookies. Works offline once loaded.
+Plain static HTML + one stylesheet + a small password-gate script + vendored highlight.js and Geist font. No build step, no framework, no cookies. Works offline once loaded.
 
 ## Run locally
 

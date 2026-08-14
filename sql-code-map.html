@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SQL-code map · RCP Trace Guide</title>
+<meta name="description" content="Appendix C of the RCP Trace Guide: how every SQL script, table, view, package, trigger, and runtime query connects to frontend and backend code.">
+<script src="auth-gate.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 14 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+<a href="frontend-code.html"><span class="stack-nav__no">A</span>Frontend code</a>
+<a href="backend-code.html"><span class="stack-nav__no">B</span>Backend code</a>
+<a href="sql-code-map.html" aria-current="page"><span class="stack-nav__no">C</span>SQL ↔ code map</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace trace--wide" id="main">
+<p class="trace__crumb">APPENDIX <b>C</b> / SQL-code map</p>
+<p class="kicker">Appendix C · SQL ↔ code map</p>
+<h1>How SQL is connected to frontend and backend code.</h1>
+<p class="lede">This is the wiring page. Start with a screen, follow it to an API route or server page, then to a backend helper, then to the Oracle objects that helper reads or writes. It also explains where DDL, DML, views, packages, triggers, grants, and tests fit into the running website.</p>
+
+<section class="step">
+<h2>The full path</h2>
+<ul class="stack-flow" aria-label="Frontend to SQL path">
+<li><span class="stack-flow__layer">BROWSER</span><span class="stack-flow__name">React UI</span><p class="stack-flow__detail">A page renders data or a client form submits JSON.</p></li>
+<li><span class="stack-flow__layer">NEXT ROUTE</span><span class="stack-flow__name">Page or API file</span><p class="stack-flow__detail">Server pages call helpers directly; client forms call <code>/api/*</code>.</p></li>
+<li><span class="stack-flow__layer">SERVER HELPER</span><span class="stack-flow__name"><code>src/server/*.ts</code></span><p class="stack-flow__detail">Validates input, checks ownership, starts transactions, and binds SQL values.</p></li>
+<li><span class="stack-flow__layer">ORACLE</span><span class="stack-flow__name">Tables, views, packages, triggers</span><p class="stack-flow__detail">Stores rows, enforces constraints, runs trigger/package logic, and returns result sets.</p></li>
+</ul>
+</section>
+
+<section class="step">
+<h2>Screen-to-SQL wiring</h2>
+<div class="tablewrap"><table class="extra-wide-table">
+<thead><tr><th>User action/screen</th><th>Frontend file</th><th>Route/helper</th><th>SQL objects touched</th></tr></thead>
+<tbody>
+<tr><td>Register account</td><td><code>(auth)/auth-form.tsx</code></td><td><code>POST /api/auth/register</code> → <code>registerAccount()</code></td><td><code>RESEARCHER_PROFILE</code>, <code>USER_SESSION</code>, <code>RCP_ID_SEQ</code>; subtype trigger creates student/faculty row.</td></tr>
+<tr><td>Login</td><td><code>(auth)/auth-form.tsx</code></td><td><code>POST /api/auth/login</code> → <code>login()</code></td><td>SELECT <code>RESEARCHER_PROFILE</code>; INSERT <code>USER_SESSION</code>.</td></tr>
+<tr><td>Navigation session display</td><td><code>layout.tsx</code></td><td><code>getSession()</code></td><td>SELECT <code>USER_SESSION</code> joined to <code>RESEARCHER_PROFILE</code>.</td></tr>
+<tr><td>Search researchers</td><td><code>(public)/researchers/page.tsx</code></td><td><code>searchResearchers()</code></td><td><code>RCP_DIRECTORY_SEARCH.SEARCH_RESEARCHERS</code>, public directory views, profile/area/skill/publication tables.</td></tr>
+<tr><td>View researcher profile</td><td><code>researchers/[id]/page.tsx</code></td><td><code>getPublicProfile()</code></td><td><code>RESEARCHER_PROFILE</code>, <code>UNIVERSITY</code>, <code>RESEARCHER_AREA</code>, <code>RESEARCHER_SKILL</code>, <code>PUBLICATION</code>.</td></tr>
+<tr><td>Send connection</td><td><code>profile-actions.tsx</code></td><td><code>POST /api/connections</code> → <code>sendConnection()</code></td><td><code>CONNECTION</code>, <code>NOTIFICATION</code>, active profile checks.</td></tr>
+<tr><td>Search publications</td><td><code>publications/page.tsx</code></td><td><code>searchPublications()</code></td><td><code>RCP_DIRECTORY_SEARCH.SEARCH_PUBLICATIONS</code>, publication directory view, author/area/citation tables.</td></tr>
+<tr><td>Create/edit publication</td><td><code>publication-editor.tsx</code></td><td><code>/api/publications</code> or <code>/api/publications/[id]</code></td><td><code>PUBLICATION</code>, <code>PUBLICATION_AUTHOR</code>, <code>PUBLICATION_AREA</code>, <code>CITATION_RECORD</code>; contribution triggers may run.</td></tr>
+<tr><td>Import DOI/OpenAlex work</td><td><code>publication-editor.tsx</code>, <code>import-wizard.tsx</code></td><td>Import API routes → <code>imports.ts</code></td><td><code>PUBLICATION</code>, authors, areas, citations, external source rows, OpenAlex area lookup/insert.</td></tr>
+<tr><td>Search opportunities</td><td><code>opportunities/page.tsx</code></td><td><code>searchOpenPosts()</code></td><td><code>RCP_DIRECTORY_SEARCH.SEARCH_OPEN_POSTS</code>, open-post directory view, post requirement tables.</td></tr>
+<tr><td>Create/publish/close post</td><td><code>post-editor.tsx</code>, <code>post-detail-actions.tsx</code></td><td><code>/api/posts</code>, <code>/api/posts/[id]</code> → <code>posts.ts</code></td><td><code>RESEARCH_POST</code>, <code>POST_REQUIRED_AREA</code>, <code>POST_REQUIRED_SKILL</code>, applicant notifications on close.</td></tr>
+<tr><td>Apply to post</td><td><code>apply-form.tsx</code></td><td><code>POST /api/posts/[id]/applications</code> → <code>submitApplication()</code></td><td><code>RESEARCH_APPLICATION</code>, <code>APPLICATION_PUBLICATION</code>, <code>PUBLICATION</code>, <code>NOTIFICATION</code>, locked post row.</td></tr>
+<tr><td>Review/withdraw application</td><td><code>application-actions.tsx</code></td><td><code>PATCH /api/applications/[id]/status</code></td><td><code>RESEARCH_APPLICATION</code>, <code>RESEARCH_POST</code>, <code>NOTIFICATION</code>.</td></tr>
+<tr><td>Edit profile</td><td><code>profile-editor.tsx</code></td><td><code>PATCH /api/profile/me</code> → <code>updateOwnProfile()</code></td><td><code>RESEARCHER_PROFILE</code>, <code>UNIVERSITY</code>, <code>RESEARCHER_AREA</code>, <code>RESEARCHER_SKILL</code>, <code>SKILL</code>; contact/expertise triggers mirror data.</td></tr>
+<tr><td>Dashboard overview</td><td><code>dashboard/page.tsx</code></td><td><code>researcherDashboard()</code>, matching helpers.</td><td>Aggregate SELECTs over publications, notifications, connections, applications, posts, areas, skills.</td></tr>
+<tr><td>Admin moderation</td><td><code>admin/page.tsx</code>, admin API routes.</td><td><code>adminDashboard()</code>, <code>setAccountStatus()</code>, <code>moderatePost()</code></td><td><code>RESEARCHER_PROFILE</code>, <code>RESEARCH_POST</code>, <code>AUDIT_LOG</code>.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>SQL type by purpose</h2>
+<div class="tablewrap"><table class="wide-table">
+<thead><tr><th>SQL category</th><th>Where it lives</th><th>Connected code</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td>DDL</td><td><code>01_schema.sql</code>, <code>06_enhanced_er_migration.sql</code></td><td>All backend helpers depend on these objects existing.</td><td>Creates tables, keys, checks, indexes, sequence, subtype/contact/expertise/contribution objects.</td></tr>
+<tr><td>DML seed data</td><td><code>02_seed_data.sql</code></td><td>Public pages, dashboard, and tests have demo rows to read.</td><td>Creates deterministic universities, areas, skills, users, publications, posts, connections, applications.</td></tr>
+<tr><td>Runtime DML</td><td><code>src/server/*.ts</code></td><td>API routes and server pages.</td><td>INSERT/UPDATE/DELETE-like behavior from real user actions.</td></tr>
+<tr><td>Runtime DQL</td><td><code>src/server/*.ts</code>, package calls.</td><td>Pages, dashboards, APIs.</td><td>SELECTs for page data, references, authorization checks, duplicate checks, and workflow locks.</td></tr>
+<tr><td>Views</td><td><code>03_views_and_plsql.sql</code></td><td><code>search.ts</code> via package procedures.</td><td>Simplify public directory reads and aggregate citation/profile/post data.</td></tr>
+<tr><td>PL/SQL packages</td><td><code>03_views_and_plsql.sql</code>, <code>06_enhanced_er_migration.sql</code></td><td><code>search.ts</code>; database tests; optional DB-first workflow package.</td><td>Own complex search predicates and enhanced-ER workflow/projection logic.</td></tr>
+<tr><td>Triggers</td><td><code>06_enhanced_er_migration.sql</code></td><td>Automatically run after backend INSERT/UPDATE/DELETE statements.</td><td>Keep subtype/contact/expertise/contribution/annual-citation tables synchronized.</td></tr>
+<tr><td>DCL/grants</td><td><code>04_security.sql</code></td><td>Production runtime user <code>RCP_APP</code>.</td><td>Limits what the app can read, insert, update, delete, and execute.</td></tr>
+<tr><td>Test SQL</td><td><code>05_database_tests.sql</code>, integration tests.</td><td>CI/manual checks.</td><td>Verifies objects, grants, package compile, workflow constraints, seed minimums, and integration behavior.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Object-to-code map</h2>
+<div class="tablewrap"><table class="extra-wide-table">
+<thead><tr><th>Oracle object</th><th>Main backend files</th><th>Main frontend screens</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>RESEARCHER_PROFILE</code>, <code>USER_SESSION</code></td><td><code>auth.ts</code>, <code>profile.ts</code>, <code>admin.ts</code></td><td>Auth pages, layout nav, profile page, admin page.</td><td>Core identity/session tables.</td></tr>
+<tr><td><code>UNIVERSITY</code>, <code>RESEARCH_AREA</code>, <code>SKILL</code></td><td><code>profile.ts</code>, <code>posts.ts</code>, <code>imports.ts</code>, <code>matching.ts</code></td><td>Researcher filters, profile editor, post editor, import flows.</td><td>Reference data; some helpers insert missing values.</td></tr>
+<tr><td><code>RESEARCHER_AREA</code>, <code>RESEARCHER_SKILL</code></td><td><code>profile.ts</code>, <code>matching.ts</code>, <code>search.ts</code></td><td>Researcher directory, profile editor, dashboard recommendations.</td><td>Many-to-many researcher expertise in the base schema.</td></tr>
+<tr><td><code>PUBLICATION</code> graph tables</td><td><code>publications.ts</code>, <code>imports.ts</code>, <code>applications.ts</code>, <code>search.ts</code></td><td>Publication pages, publication editor, import wizard, application form.</td><td>Includes authors, areas, citations, external source IDs.</td></tr>
+<tr><td><code>RESEARCH_POST</code> graph tables</td><td><code>posts.ts</code>, <code>applications.ts</code>, <code>matching.ts</code>, <code>search.ts</code></td><td>Opportunity pages, post editor, dashboard posts, applications.</td><td>Includes area/skill requirements and lifecycle status.</td></tr>
+<tr><td><code>CONNECTION</code></td><td><code>connections.ts</code>, <code>dashboard.ts</code></td><td>Researcher profile connect button, dashboard connections.</td><td>Professional connection workflow.</td></tr>
+<tr><td><code>RESEARCH_APPLICATION</code>, <code>APPLICATION_PUBLICATION</code></td><td><code>applications.ts</code>, <code>posts.ts</code>, <code>dashboard.ts</code></td><td>Opportunity apply form, dashboard applications, post detail.</td><td>Application state machine and attached proof publications.</td></tr>
+<tr><td><code>NOTIFICATION</code></td><td><code>notifications.ts</code>, workflow helpers.</td><td>Dashboard notifications plus side effects from connections/posts/applications.</td><td>Created by backend helpers when user-visible events happen.</td></tr>
+<tr><td><code>AUDIT_LOG</code></td><td><code>admin.ts</code></td><td>Admin moderation.</td><td>Records admin account/post moderation actions.</td></tr>
+<tr><td>Enhanced ER tables</td><td>Mostly trigger-maintained; selected by reports/tests.</td><td>Indirectly affected by profile/publication/citation edits.</td><td>Subtype, contact, expertise, contribution, review, annual citation objects demonstrate DBMS modeling.</td></tr>
+<tr><td><code>RCP_DIRECTORY_SEARCH</code></td><td><code>search.ts</code></td><td>Public directory/search pages.</td><td>PL/SQL package exposed through ref cursors.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>How to trace any new feature</h2>
+<ol>
+<li>Find the screen file in <code>src/app/**/page.tsx</code> or the client component with the button/form.</li>
+<li>If it is a read-only server page, follow its imported <code>src/server/*</code> helper.</li>
+<li>If it is a client mutation, follow its <code>fetch('/api/...')</code> call to <code>src/app/api/**/route.ts</code>.</li>
+<li>From the route, follow the imported helper in <code>src/server/*.ts</code>.</li>
+<li>Inside the helper, read the SQL text and binds; map each table/view/package to the schema, PL/SQL, and SQL-type sections.</li>
+<li>Check <code>06_enhanced_er_migration.sql</code> for triggers that run automatically after the helper writes rows.</li>
+<li>Check <code>04_security.sql</code> to confirm the runtime user is allowed to perform that SQL.</li>
+</ol>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="backend-code.html"><small>◀ Appendix B</small> Backend code</a>
+<a class="pager__btn" href="index.html">Restart <small>Trace 01 ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>

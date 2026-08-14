@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frontend code · RCP Trace Guide</title>
+<meta name="description" content="Appendix A of the RCP Trace Guide: every frontend file, what it renders, how client components call APIs, and how data enters React pages.">
+<script src="auth-gate.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 14 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+<a href="frontend-code.html" aria-current="page"><span class="stack-nav__no">A</span>Frontend code</a>
+<a href="backend-code.html"><span class="stack-nav__no">B</span>Backend code</a>
+<a href="sql-code-map.html"><span class="stack-nav__no">C</span>SQL ↔ code map</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace trace--wide" id="main">
+<p class="trace__crumb">APPENDIX <b>A</b> / frontend code</p>
+<p class="kicker">Appendix A · Frontend code</p>
+<h1>Every React page, explained from URL to API call.</h1>
+<p class="lede">This page is the frontend reading guide. It does not paste every source file again; the canonical code remains in the RCP repository. Instead, it explains every frontend file by role, shows the important code shapes, and names the backend or database path each screen depends on. Blocks labeled as teaching sketches are shortened on purpose.</p>
+
+<section class="step">
+<h2>The frontend rule</h2>
+<p>In this Next.js app, most page files are <strong>server components</strong>. They run on the Node server, fetch data before HTML is sent, and return JSX. Files that start with <code>'use client'</code> run in the browser and are used only where the user must type, click, submit, or refresh the current route.</p>
+<div class="callout breakpoint"><p class="callout__tag">Frontend boundary</p><p>React components render UI. They do not open Oracle connections. Server pages may call <code>src/server/*</code> helpers because they run on Node; client components must call <code>/api/*</code> routes with <code>fetch()</code>.</p></div>
+</section>
+
+<section class="step">
+<h2>Global shell code</h2>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/app/layout.tsx</span><span class="code-frame__lines">selected lines 18-64</span></figcaption>
+<pre><code class="language-tsx">async function SessionActions({ mobile = false }: { mobile?: boolean }) {
+  const session = await getSession()
+  return &lt;div className={mobile ? 'site-nav__mobile-session' : 'site-nav__actions'}&gt;{session ? &lt;&gt;&lt;Link href="/dashboard"&gt;{session.fullName}&lt;/Link&gt;&lt;LogoutButton /&gt;&lt;/&gt; : &lt;&gt;&lt;Link href="/login"&gt;Sign in&lt;/Link&gt;&lt;Link className="site-nav__join" href="/register"&gt;Join RCP&lt;/Link&gt;&lt;/&gt;}&lt;/div&gt;
+}
+
+export default function RootLayout({ children }: Readonly&lt;{ children: React.ReactNode }&gt;) {
+  return (
+    &lt;html lang="en" className={sans.variable} suppressHydrationWarning&gt;
+      &lt;body&gt;
+        &lt;a className="skip-link" href="#main-content"&gt;Skip to content&lt;/a&gt;
+        &lt;SiteHeader /&gt;
+        &lt;div id="main-content"&gt;{children}&lt;/div&gt;
+      &lt;/body&gt;
+    &lt;/html&gt;
+  )
+}</code></pre>
+</figure>
+<p>The layout wraps every route. <code>SessionActions()</code> is async because it checks the session cookie on the server before rendering the header. That is why logged-out users see sign-in links and logged-in users see their workspace link without an extra browser request.</p>
+</section>
+
+<section class="step">
+<h2>Client mutation shape</h2>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/app/(auth)/auth-form.tsx</span><span class="code-frame__lines">teaching sketch from lines 14-48</span></figcaption>
+<pre><code class="language-tsx">'use client'
+
+async function submit(event: FormEvent&lt;HTMLFormElement&gt;) {
+  event.preventDefault()
+  const form = new FormData(event.currentTarget)
+  const response = await fetch(`/api/auth/${mode}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(Object.fromEntries(form)),
+  })
+  const body = await response.json().catch(() =&gt; ({}))
+  if (!response.ok) return setError(body.message ?? 'Authentication failed. Try again.')
+  router.replace(body.user?.role === 'ADMIN' ? '/admin' : '/dashboard')
+  router.refresh()
+}</code></pre>
+</figure>
+<p>This is the pattern used by the frontend forms: stop the default browser submit, serialize the form, send JSON to an API route, handle the response, then redirect or refresh the current server-rendered route.</p>
+</section>
+
+<section class="step">
+<h2>Every frontend file</h2>
+<div class="tablewrap"><table class="extra-wide-table">
+<thead><tr><th>File group</th><th>Files</th><th>What the code does</th><th>Backend/API connection</th></tr></thead>
+<tbody>
+<tr><td>Global app shell</td><td><code>src/app/layout.tsx</code>, <code>src/app/globals.css</code>, <code>src/components/mobile-nav.tsx</code>, <code>src/components/auth/logout-button.tsx</code></td><td>Defines metadata, font, navigation, skip link, responsive menu, logout button, and the full visual system.</td><td><code>getSession()</code> for nav state; logout button calls <code>POST /api/auth/logout</code>.</td></tr>
+<tr><td>Fallback states</td><td><code>src/app/loading.tsx</code>, <code>src/app/error.tsx</code>, <code>src/app/not-found.tsx</code>, dashboard/public loading files.</td><td>Small UI states rendered by Next.js while loading, after route errors, or when <code>notFound()</code> is called.</td><td>No direct SQL; they are framework route states.</td></tr>
+<tr><td>Marketing/static pages</td><td><code>src/app/page.tsx</code>, <code>src/app/team/page.tsx</code></td><td>Home page and team credits.</td><td>Home reads <code>getSession()</code> to choose CTA destinations.</td></tr>
+<tr><td>Auth pages</td><td><code>src/app/(auth)/login/page.tsx</code>, <code>register/page.tsx</code>, <code>auth-form.tsx</code></td><td>Thin page wrappers plus one reusable client form for login/register.</td><td><code>POST /api/auth/login</code> and <code>POST /api/auth/register</code>.</td></tr>
+<tr><td>Public researcher pages</td><td><code>src/app/(public)/researchers/page.tsx</code>, <code>[id]/page.tsx</code>, <code>profile-actions.tsx</code></td><td>Directory filters, profile detail, and connect button.</td><td>Server reads use <code>searchResearchers()</code>/<code>getPublicProfile()</code>; connect calls <code>POST /api/connections</code>.</td></tr>
+<tr><td>Public publication pages</td><td><code>src/app/(public)/publications/page.tsx</code>, <code>[id]/page.tsx</code></td><td>Publication search form and detail page.</td><td><code>searchPublications()</code> and <code>getPublication()</code>.</td></tr>
+<tr><td>Public opportunity pages</td><td><code>src/app/(public)/opportunities/page.tsx</code>, <code>[id]/page.tsx</code>, <code>apply-form.tsx</code></td><td>Open post search, post detail, and application form.</td><td><code>searchOpenPosts()</code>, <code>getPost()</code>, <code>POST /api/posts/[id]/applications</code>.</td></tr>
+<tr><td>Dashboard frame</td><td><code>src/app/dashboard/layout.tsx</code>, <code>dashboard/page.tsx</code></td><td>Protects the workspace and renders overview cards.</td><td><code>requireUser()</code>, <code>researcherDashboard()</code>.</td></tr>
+<tr><td>Profile editor</td><td><code>dashboard/profile/page.tsx</code>, <code>profile-editor.tsx</code></td><td>Loads own profile/reference data and submits profile edits.</td><td><code>getOwnProfile()</code>, reference list helpers, <code>PATCH /api/profile/me</code>.</td></tr>
+<tr><td>Publication editor/import UI</td><td><code>dashboard/publications/page.tsx</code>, <code>new/page.tsx</code>, <code>[id]/page.tsx</code>, <code>publication-editor.tsx</code></td><td>Own publication list, create/edit form, DOI import controls.</td><td><code>GET/POST /api/publications</code>, <code>PATCH/DELETE /api/publications/[id]</code>, <code>/api/import/doi</code>.</td></tr>
+<tr><td>OpenAlex author import UI</td><td><code>dashboard/import/page.tsx</code>, <code>import-wizard.tsx</code>, <code>import-state.ts</code></td><td>Resolves author IDs, previews works, imports selected publications.</td><td><code>/api/openalex/author</code>, <code>/api/import/publications</code>.</td></tr>
+<tr><td>Post management UI</td><td><code>dashboard/posts/page.tsx</code>, <code>new/page.tsx</code>, <code>[id]/page.tsx</code>, <code>post-editor.tsx</code>, <code>post-detail-actions.tsx</code></td><td>Lists owned posts, creates drafts, edits requirements, publishes/closes posts.</td><td><code>/api/posts</code>, <code>/api/posts/[id]</code>.</td></tr>
+<tr><td>Connection/application/notification UI</td><td><code>dashboard/connections/*</code>, <code>dashboard/applications/*</code>, <code>dashboard/notifications/*</code></td><td>Inbox/outbox controls, application review/withdraw controls, mark-read controls.</td><td><code>/api/connections</code>, <code>/api/applications/[id]/status</code>, <code>/api/notifications</code>.</td></tr>
+<tr><td>Admin UI</td><td><code>src/app/admin/page.tsx</code></td><td>Admin overview metrics and moderation entry point.</td><td><code>adminDashboard()</code>; admin APIs handle mutations.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Frontend request patterns</h2>
+<div class="tablewrap"><table class="wide-table">
+<thead><tr><th>Pattern</th><th>Where used</th><th>Why it exists</th></tr></thead>
+<tbody>
+<tr><td>Server page reads</td><td>Directories, details, dashboard pages.</td><td>Faster first paint and no duplicate browser API fetch for initial data.</td></tr>
+<tr><td>Client form mutations</td><td>Auth, profile, editors, workflow buttons.</td><td>The browser owns form state and submits JSON to protected API routes.</td></tr>
+<tr><td>GET query filters</td><td>Researcher/publication/opportunity search pages.</td><td>Filters become shareable URLs and server pages can read <code>searchParams</code>.</td></tr>
+<tr><td><code>router.refresh()</code></td><td>Editors and action buttons after success.</td><td>Re-runs the server page so fresh database state appears without hand-maintained client cache.</td></tr>
+<tr><td><code>notFound()</code></td><td>Dynamic profile/publication/post routes.</td><td>One simple way to hide missing, private, inactive, or unauthorized records.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="deployment.html"><small>◀ Trace 11</small> Deployment</a>
+<a class="pager__btn" href="backend-code.html">Next: backend code <small>Appendix B ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>
