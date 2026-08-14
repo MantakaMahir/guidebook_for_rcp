@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Node ↔ Oracle · RCP Trace Guide</title>
+<meta name="description" content="Trace 05 of the RCP Trace Guide: the connection pool, bind variables, and transactions in db-core.ts.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 11 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html" aria-current="page"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace" id="main">
+<p class="trace__crumb">TRACE <b>05</b> / 11 · the driver</p>
+<p class="kicker">Trace 05 · Node ↔ Oracle</p>
+<h1>One small file carries every query to the database.</h1>
+<p class="lede"><code>src/server/db-core.ts</code> is 124 lines and it is the only place in the application that knows Oracle exists. Everything else: posts, profiles, imports: calls three exports from this file. If you understand this trace, you understand how the whole platform persists data.</p>
+
+<section class="step">
+<h2>The library: oracledb is JDBC for Node</h2>
+<p>The <code>oracledb</code> npm package is Oracle's official driver for Node.js. Same mental model as JDBC: you open connections, execute SQL with binds, fetch rows, commit. The driver even has the same two modes: Thin (pure JavaScript) and Thick (native client libraries), and RCP runs Thick mode against Oracle Client.</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/db-core.ts</span><span class="code-frame__lines">lines 1-7</span></figcaption>
+<pre><code class="language-typescript">import 'server-only'
+import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import oracledb, { type Pool } from 'oracledb'
+
+oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT</code></pre>
+</figure>
+<p>Line 1, <code>import 'server-only'</code>, is the fence from Trace 02: if any browser code ever imports this file, the build fails. Line 7 sets the default row shape: each row comes back as a JavaScript object keyed by column name (<code>{ FULL_NAME: '...' }</code>) instead of an array.</p>
+</section>
+
+<section class="step">
+<h2>A pool, not a connection</h2>
+<p>Opening a database connection is slow: network handshake, authentication, session setup. A web server handling dozens of requests per second cannot afford one per request, so it keeps a <strong>pool</strong>: a small set of open connections that get borrowed and returned. Exactly what a JDBC <code>DataSource</code> pool does.</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/db-core.ts</span><span class="code-frame__lines">lines 57-82</span></figcaption>
+<pre><code class="language-typescript">export async function getOraclePool(): Promise&lt;Pool&gt; {
+  if (!globalThis.__rcpOraclePoolPromise) {
+    await initOracleClient()
+    const configDir = resolveConfigDir()
+    globalThis.__rcpOraclePoolPromise = oracledb.createPool({
+      user: requiredEnv('ORACLE_USER'),
+      password: requiredEnv('ORACLE_PASSWORD'),
+      connectString: requiredEnv('ORACLE_CONNECT_STRING'),
+      ...(configDir ? {
+        configDir,
+        ...(process.env.ORACLE_CLIENT_LIB_DIR?.trim() ? {} : { walletLocation: configDir }),
+        ...(process.env.ORACLE_WALLET_PASSWORD?.trim() ? { walletPassword: process.env.ORACLE_WALLET_PASSWORD.trim() } : {}),
+      } : {}),
+      poolMin: 0,
+      poolMax: 4,
+      poolIncrement: 1,
+      poolTimeout: 60,
+      queueTimeout: 10000,
+      stmtCacheSize: 30,
+    }).catch((error: unknown) =&gt; {
+      globalThis.__rcpOraclePoolPromise = undefined
+      throw error
+    })
+  }
+  return globalThis.__rcpOraclePoolPromise
+}</code></pre>
+</figure>
+<ul>
+<li><strong>Credentials come from environment variables</strong>: <code>ORACLE_USER</code>, <code>ORACLE_PASSWORD</code>, <code>ORACLE_CONNECT_STRING</code>. They exist in the server process's memory, never in the code, never in the browser. <code>requiredEnv</code> throws if one is missing, so a misconfigured server fails fast at startup instead of failing mysteriously at query time.</li>
+<li><strong><code>poolMax: 4</code></strong>: at most four simultaneous connections. Oracle's Always Free tier caps concurrency, so the pool is sized to fit. When all four are busy, callers wait up to <code>queueTimeout</code> (10 seconds) for one to free up.</li>
+<li><strong><code>stmtCacheSize: 30</code></strong>: parsed statements are cached so repeated queries skip the parse step. JDBC statement caching, same idea.</li>
+<li><strong>The pool promise lives on <code>globalThis</code></strong> so that in development, when modules get reloaded, the old pool is reused instead of leaked.</li>
+</ul>
+<p>The wallet block (<code>configDir</code>, <code>walletPassword</code>) is how the app proves its identity to the cloud database: a folder of certificates and configuration instead of a plain password-over-the-wire. Trace 11 unpacks it.</p>
+</section>
+
+<section class="step">
+<h2><code>query()</code>: borrow, execute with binds, return</h2>
+<p>This is the read path used across the codebase: one function, and every call site gets the same discipline for free:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/db-core.ts</span><span class="code-frame__lines">lines 97-110</span></figcaption>
+<pre><code class="language-typescript">export async function query&lt;T&gt;(sql: string, binds: oracledb.BindParameters = {}): Promise&lt;T[]&gt; {
+  const db = await connection()
+  try {
+    const result = await db.execute&lt;T&gt;(sql, binds, { outFormat: oracledb.OUT_FORMAT_OBJECT })
+    const rows = result.rows ?? []
+    return Promise.all(rows.map(async (row) =&gt;
+      Object.fromEntries(await Promise.all(Object.entries(row as object).map(
+        async ([key, item]) =&gt; [key, await readLob(item)],
+      ))) as T,
+    ))
+  } finally {
+    await db.close()
+  }
+}</code></pre>
+</figure>
+<p>Three habits this function enforces:</p>
+<ul>
+<li><strong>Borrow and return.</strong> <code>connection()</code> borrows from the pool; the <code>finally</code> block guarantees the connection goes back even when the query throws. Leak a connection and the pool starves: the web equivalent of forgetting to close a file handle.</li>
+<li><strong>SQL and values travel separately.</strong> The SQL text with <code>:placeholders</code> goes one way, the values go in the <code>binds</code> object. The database compiles the statement first and treats the values purely as data, so no input can change the query's meaning.</li>
+<li><strong>LOBs are read before returning.</strong> Oracle CLOB columns stream; <code>readLob</code> drains each one into a plain string so callers never see driver internals.</li>
+</ul>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p><pre style="display:inline">query(sql, { email })</pre> is <code>PreparedStatement ps = conn.prepareStatement(sql); ps.setString(1, email); ps.executeQuery();</code>: with the placeholder named <code>:email</code> instead of positional <code>?</code>, and try-with-resources handling the close.</p></div>
+<div class="callout breakpoint"><p class="callout__tag">Breakpoint: SQL injection dies here</p><p>Because every query in RCP goes through binds, a user typing <code>' OR 1=1 --</code> into a search box just becomes a strange literal string that matches nothing. Injection requires string-concatenated SQL, and this codebase never builds SQL by concatenation.</p></div>
+</section>
+
+<section class="step">
+<h2><code>withTransaction()</code>: commit on success, rollback on throw</h2>
+<p>Writes need atomicity. The pattern in RCP: pass a function that receives a connection; if it returns, commit; if it throws, rollback; either way, close.</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/db-core.ts</span><span class="code-frame__lines">lines 112-124</span></figcaption>
+<pre><code class="language-typescript">export async function withTransaction&lt;T&gt;(work: (connection: oracledb.Connection) =&gt; Promise&lt;T&gt;): Promise&lt;T&gt; {
+  const db = await connection()
+  try {
+    const result = await work(db)
+    await db.commit()
+    return result
+  } catch (error) {
+    await db.rollback()
+    throw error
+  } finally {
+    await db.close()
+  }
+}</code></pre>
+</figure>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>This is <code>conn.setAutoCommit(false)</code> + try/catch with <code>commit()</code>/<code>rollback()</code>, packaged as a higher-order function. The caller writes only the work; the transaction ceremony exists once, here. Registration used it in Trace 04: two INSERTs, one atomic unit.</p></div>
+</section>
+
+<section class="step">
+<h2>Where IDs come from: <code>RCP_ID_SEQ</code></h2>
+<p>Oracle 11g has no auto-increment columns, so the schema defines one sequence for the whole database, and every INSERT draws the next ID from it:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">database/01_schema.sql</span><span class="code-frame__lines">line 4</span></figcaption>
+<pre><code class="language-sql">CREATE SEQUENCE RCP_ID_SEQ START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;</code></pre>
+</figure>
+<p>You saw it in action in Trace 04: <code>VALUES (RCP_ID_SEQ.NEXTVAL, :email, ...)</code>. Each <code>.NEXTVAL</code> atomically returns a fresh number that no other session will ever receive: concurrency-safe ID generation built into the engine.</p>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>A sequence is a thread-safe counter owned by the database itself: <code>AtomicLong</code>, except it survives restarts, works across every connection at once, and never hands the same number to two transactions.</p></div>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="backend.html"><small>◀ Trace 04</small> API routes</a>
+<a class="pager__btn" href="schema.html">Next: the schema <small>Trace 06 ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>

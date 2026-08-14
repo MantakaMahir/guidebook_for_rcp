@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Testing · RCP Trace Guide</title>
+<meta name="description" content="Trace 10 of the RCP Trace Guide: unit tests, Oracle integration tests, the SQL harness, and typechecking.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 11 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html" aria-current="page"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace" id="main">
+<p class="trace__crumb">TRACE <b>10</b> / 11 · testing</p>
+<p class="kicker">Trace 10 · Testing</p>
+<h1>Code you cannot see failing is code that will.</h1>
+<p class="lede">RCP is verified at four levels: TypeScript's type checker, fast unit tests, integration tests against a real Oracle database, and a pure-SQL harness that tests the schema itself. Each level catches a different class of mistake, and each one runs from a single command.</p>
+
+<section class="step">
+<h2>Level 0: the compiler is a test suite</h2>
+<p>Before anything executes, <code>npm run typecheck</code> runs <code>tsc --noEmit</code>. Because TypeScript types flow from interfaces like <code>SessionUser</code> down through every function, a misspelled column name in a mapping or a forgotten field fails the build: not the user. In a codebase where SQL rows become objects, the type system is the first line of tests.</p>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>Running <code>tsc --noEmit</code> is compiling without producing class files: <code>javac</code> as a verification step. The difference is that TypeScript's types also describe the shapes of database rows and JSON payloads, so "it compiles" already means "the layers agree on the data".</p></div>
+</section>
+
+<section class="step">
+<h2>Unit tests: <code>node:test</code>, no framework</h2>
+<p>Node ships a test runner; RCP uses it directly with the strict assertion module. Here is the complete test file for password hashing: small enough to hold in your head, which is the point:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">tests/unit/passwords.test.ts</span><span class="code-frame__lines">whole file · 20 lines</span></figcaption>
+<pre><code class="language-typescript">import assert from 'node:assert/strict'
+import test from 'node:test'
+import { hashPassword, verifyPassword } from '../../src/server/passwords'
+
+test('hashes a password without retaining its plaintext', async () =&gt; {
+  const password = 'correct horse battery staple'
+  const encoded = await hashPassword(password)
+
+  assert.match(encoded, /^scrypt\$[^$]+\$[^$]+$/)
+  assert.doesNotMatch(encoded, /correct horse battery staple/)
+  assert.equal(await verifyPassword(password, encoded), true)
+})
+
+test('rejects a different password and malformed stored encoding', async () =&gt; {
+  const encoded = await hashPassword('first value')
+
+  assert.equal(await verifyPassword('second value', encoded), false)
+  assert.equal(await verifyPassword('first value', 'not-a-password-hash'), false)
+  assert.equal(await verifyPassword('first value', `${encoded}$extra`), false)
+})</code></pre>
+</figure>
+<p>What makes these tests good:</p>
+<ul>
+<li><strong>They test behavior, not implementation.</strong> "A different password is rejected" stays true however scrypt is wrapped; a test that checked internal variable names would break on every refactor.</li>
+<li><strong>They include the hostile cases.</strong> Malformed hash strings, extra segments: the inputs an attacker would poke, asserted to return <code>false</code> rather than throw.</li>
+<li><strong>They run in milliseconds with zero setup.</strong> <code>npm test</code> executes every unit test using nothing but Node: no database, no network.</li>
+</ul>
+</section>
+
+<section class="step">
+<h2>Integration tests: the real database answers</h2>
+<p>Unit tests prove the functions are correct in isolation; integration tests prove they are correct <em>against Oracle</em>: that the SQL parses, the constraints accept what should be accepted, and the triggers fire. Five workflows live in <code>tests/integration/</code>:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>File</th><th>What it exercises</th></tr></thead>
+<tbody>
+<tr><td><code>database-health.test.ts</code></td><td>Pool connects, schema exists, seed counts match</td></tr>
+<tr><td><code>auth-flow.test.ts</code></td><td>Register → login → session → logout against real tables</td></tr>
+<tr><td><code>profile-workflow.test.ts</code></td><td>Profile updates, privacy visibility</td></tr>
+<tr><td><code>publication-workflow.test.ts</code></td><td>Publication creation, stewardship, DOI import path</td></tr>
+<tr><td><code>collaboration-workflow.test.ts</code></td><td>Posts, applications, connections, notifications</td></tr>
+</tbody>
+</table></div>
+<p>They are deliberately gated: set <code>RUN_ORACLE_INTEGRATION_TESTS=1</code> to run them, otherwise they skip. Tests that require external infrastructure must never fail a build just because the database is unreachable: and must never be skipped silently when you asked for them.</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">run integration tests</span><span class="code-frame__lines">PowerShell</span></figcaption>
+<pre><code class="language-powershell">$env:RUN_ORACLE_INTEGRATION_TESTS = '1'
+node --env-file=".env.local" --import tsx --conditions=react-server --test tests/integration/**/*.test.ts</code></pre>
+</figure>
+</section>
+
+<section class="step">
+<h2>The SQL harness: testing the database with SQL</h2>
+<p>The schema gets its own test suite, written in the language of the thing being tested. <code>database/05_database_tests.sql</code> runs as the owner account after a rebuild and asserts the invariants of the schema itself: constraint behavior, the exact number of grants issued to <code>RCP_APP</code>, sequence integrity: printing PASS/FAIL blocks through <code>DBMS_OUTPUT</code>. The orchestrator is one PowerShell script:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">rebuild + verify the local database</span><span class="code-frame__lines">PowerShell</span></figcaption>
+<pre><code class="language-powershell">pwsh -File tests/database/run-database-tests.ps1</code></pre>
+</figure>
+<p>It replays <code>00_reset</code> → <code>01_schema</code> → <code>02_seed_data</code> → <code>06_enhanced_er_migration</code> → <code>03_views_and_plsql</code> → <code>04_security</code> → <code>05_database_tests</code> against local Oracle XE. If any script errors, <code>WHENEVER SQLERROR EXIT</code> stops the run cold: the same fail-fast discipline as the unit tests, at the DDL level.</p>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>The four levels are your familiar pyramid with a database twist: types ≈ compile checks, unit tests ≈ JUnit, integration tests ≈ tests against a real container, and the SQL harness ≈ contract tests for the persistence layer written by the persistence layer itself.</p></div>
+</section>
+
+<section class="step">
+<h2>What to copy when you add code</h2>
+<ul>
+<li>Pure logic (validation, normalization, matching rules) → a unit test in <code>tests/unit/</code>, run by <code>npm test</code>.</li>
+<li>Anything touching a table → an integration workflow step, run gated behind the environment flag.</li>
+<li>Schema changes → update the numbered scripts <em>and</em> the assertions in <code>05_database_tests.sql</code> in the same change.</li>
+<li>Before any review: <code>npm run typecheck</code>, <code>npm test</code>, <code>npm run build</code>: the three commands the project treats as the definition of "done".</li>
+</ul>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="features.html"><small>◀ Trace 09</small> A feature end to end</a>
+<a class="pager__btn" href="deployment.html">Next: deployment <small>Trace 11 ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>

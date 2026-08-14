@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frontend: React pages · RCP Trace Guide</title>
+<meta name="description" content="Trace 03 of the RCP Trace Guide: how a folder becomes a page, how a function becomes HTML, and where interactivity lives.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 11 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html" aria-current="page"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace" id="main">
+<p class="trace__crumb">TRACE <b>03</b> / 11 · frontend</p>
+<p class="kicker">Trace 03 · Frontend</p>
+<h1>A page is an async function that returns HTML.</h1>
+<p class="lede">We follow <code>/researchers</code>: the public directory of researchers. One folder, one function, one SQL query, one rendered page. No controller, no template engine, no fetch glue: the page function queries the database itself and returns markup.</p>
+
+<section class="step">
+<h2>The folder is the route</h2>
+<p>The URL <code>/researchers</code> exists because this file exists. Delete the file and the URL stops resolving; rename the folder and the URL moves. Routing is the filesystem.</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/app/(public)/researchers/page.tsx</span><span class="code-frame__lines">lines 1-25</span></figcaption>
+<pre><code class="language-typescript">import Link from 'next/link'
+import Form from 'next/form'
+import { searchResearchers } from '@/server/search'
+import { listResearchAreas, listUniversities } from '@/server/profile'
+
+export const dynamic = 'force-dynamic'
+type Params = Record&lt;string, string | undefined&gt;
+
+export default async function ResearcherDirectory({ searchParams }: { searchParams: Promise&lt;Params&gt; }) {
+  const params = await searchParams
+  const [researchers, universities, areas] = await Promise.all([
+    searchResearchers({
+      keyword: params.q,
+      universityId: params.universityId,
+      areaId: params.areaId,
+      designation: params.designation,
+      country: params.country,
+      publicationYearMin: params.publicationYearMin,
+      publicationYearMax: params.publicationYearMax,
+      sort: params.sort,
+      page: params.page,
+    }),
+    listUniversities(),
+    listResearchAreas(),
+  ])</code></pre>
+</figure>
+<ul>
+<li><code>export default async function</code>: the framework calls this function on every request and sends whatever it returns to the browser.</li>
+<li><code>searchParams</code>: the query string (<code>?q=vision&amp;sort=name</code>) arrives as an object. URL parameters are just function arguments.</li>
+<li><code>Promise.all([...])</code>: run three queries concurrently instead of sequentially. Like starting three threads and joining them, written as one expression.</li>
+<li><code>@/server/search</code>: the <code>@/</code> alias means <code>src/</code>, so this imports <code>src/server/search.ts</code>. A server module, called directly, no HTTP hop needed.</li>
+</ul>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>This one function is controller + service call + view. <code>searchResearchers()</code> is the service method; the <code>return &lt;main&gt;...&lt;/main&gt;</code> you will see next is the rendered JSP: except it is type-checked at compile time, and a typo in a column name fails the build instead of the user.</p></div>
+</section>
+
+<section class="step">
+<h2>JSX: markup written inside the function</h2>
+<p>The second half of the same file returns the HTML. The angle-bracket syntax is JSX: HTML embedded in TypeScript. Curly braces <code>{ }</code> drop expressions into the markup, and <code>.map()</code> is the loop construct: one list item per row.</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/app/(public)/researchers/page.tsx</span><span class="code-frame__lines">lines 48-51</span></figcaption>
+<pre><code class="language-typescript">    &lt;p className="directory-count"&gt;Showing {researchers.length} researcher{researchers.length === 1 ? '' : 's'}&lt;/p&gt;
+     &lt;div className="artifact-list"&gt;{researchers.map((researcher) =&gt; &lt;div data-slot="card" className="artifact-card" key={researcher.RESEARCHER_ID}&gt;&lt;div data-slot="card-header"&gt;&lt;div data-slot="card-title"&gt;&lt;Link href={`/researchers/${researcher.RESEARCHER_ID}`}&gt;{researcher.FULL_NAME}&lt;/Link&gt;&lt;/div&gt;&lt;div data-slot="card-description"&gt;{researcher.DESIGNATION ?? 'Researcher'} · {researcher.UNIVERSITY_NAME ?? 'Independent'}&lt;/div&gt;&lt;/div&gt;{researcher.PRIMARY_AREA &amp;&amp; &lt;div data-slot="card-content"&gt;{researcher.PRIMARY_AREA}&lt;/div&gt;}&lt;/div&gt;)}&lt;/div&gt;
+    {!researchers.length &amp;&amp; &lt;p className="directory-empty"&gt;No public researchers match these filters. Try broadening your search.&lt;/p&gt;}
+  &lt;/main&gt;
+}</code></pre>
+</figure>
+<p>Read the three patterns that do most of the work in this codebase:</p>
+<ul>
+<li><code>{expression}</code>: interpolate a value. <code>{researcher.FULL_NAME}</code> prints the column.</li>
+<li><code>{list.map(item =&gt; ...)}</code>: loop. The <code>key=</code> prop gives each item a stable identity, like a primary key for the renderer.</li>
+<li><code>{condition &amp;&amp; &lt;jsx&gt;}</code>: conditional render. If the left side is false, nothing is emitted. The empty state on the last line uses exactly this.</li>
+</ul>
+<p>Note <code>className</code> instead of <code>class</code>: <code>class</code> is a reserved word in TypeScript, so JSX renamed the attribute. Styling itself is plain CSS: one global stylesheet, <code>src/app/globals.css</code>, no CSS-in-JS machinery.</p>
+</section>
+
+<section class="step">
+<h2>Server components: the page ran before you saw it</h2>
+<p>Here is the part with no Java equivalent. The function above executed <strong>on the server</strong>: it awaited real Oracle queries, and the browser received finished HTML. This is a <em>server component</em>: the default kind. Its powers and its limits:</p>
+<ul>
+<li>It may <code>await</code> database calls directly: that is how the page got its data without any API round trip.</li>
+<li>It may not listen to clicks or hold state. It runs once per request, like a template being rendered, not like a live object.</li>
+</ul>
+<div class="callout breakpoint"><p class="callout__tag">Breakpoint</p><p>The <code>researchers</code> array never traveled to the browser as data: only the rendered HTML did. The database rows, the query, and the column names stay on the server. This is the golden rule from Trace 01, working exactly as designed.</p></div>
+</section>
+
+<section class="step">
+<h2>Client components: where clicks live</h2>
+<p>Interactivity needs code that runs in the browser. A file opts in with <code>'use client'</code> at the top; from then on it ships to the browser and can hold state and handle events. The login form is the cleanest example in the codebase:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/app/(auth)/auth-form.tsx</span><span class="code-frame__lines">lines 1-30</span></figcaption>
+<pre><code class="language-typescript">'use client'
+
+import { FormEvent, useState } from 'react'
+import { useRouter } from 'next/navigation'
+
+type AuthFormProps = { mode: 'login' | 'register' }
+
+export function AuthForm({ mode }: AuthFormProps) {
+  const router = useRouter()
+  const [error, setError] = useState('')
+  const [pending, setPending] = useState(false)
+  const isRegister = mode === 'register'
+
+  async function submit(event: FormEvent&lt;HTMLFormElement&gt;) {
+    event.preventDefault()
+    setPending(true)
+    setError('')
+    try {
+      const form = new FormData(event.currentTarget)
+      const response = await fetch(`/api/auth/${mode}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(Object.fromEntries(form)),
+      })
+      const body = await response.json().catch(() =&gt; ({}))
+      if (!response.ok) {
+        setError(body.message ?? 'Authentication failed. Try again.')
+        setPending(false)
+        return
+      }</code></pre>
+</figure>
+<ul>
+<li><code>useState('')</code>: a field that survives re-renders. Reading it gives the current value; calling the setter re-renders the component. Think of it as an instance variable that repaints the UI when written.</li>
+<li><code>onSubmit={submit}</code>: attaching a handler is just passing a function reference, like a Java listener.</li>
+<li><code>fetch('/api/auth/login', { method: 'POST', ... })</code>: the client side of the boundary from Trace 02: the browser calls the server over HTTP, sending JSON, and inspects the status code before trusting the body.</li>
+</ul>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>Server component ≈ code that runs in <code>main()</code> on the server at request time. Client component ≈ a Swing/JavaFX panel shipped to the user's machine: it keeps state, reacts to events, and talks back to the server over the network when it needs something it cannot compute itself.</p></div>
+</section>
+
+<section class="step">
+<h2>The split in one picture</h2>
+<div class="tablewrap"><table>
+<thead><tr><th></th><th>Server component (default)</th><th>Client component (<code>'use client'</code>)</th></tr></thead>
+<tbody>
+<tr><td>Runs on</td><td>Server, once per request</td><td>Browser (and once on the server to render first paint)</td></tr>
+<tr><td>May query Oracle</td><td>Yes: <code>await</code> a server module</td><td>No: must call an API route</td></tr>
+<tr><td>May handle clicks</td><td>No</td><td>Yes</td></tr>
+<tr><td>Examples in RCP</td><td><code>researchers/page.tsx</code>, <code>dashboard/page.tsx</code></td><td><code>auth-form.tsx</code>, <code>post-editor.tsx</code>, <code>import-wizard.tsx</code></td></tr>
+</tbody>
+</table></div>
+<p>Rule of thumb the codebase follows: stay server by default; go client only at the leaf that needs a click, a keystroke, or a timer.</p>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="architecture.html"><small>◀ Trace 02</small> The architecture</a>
+<a class="pager__btn" href="backend.html">Next: API routes <small>Trace 04 ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>

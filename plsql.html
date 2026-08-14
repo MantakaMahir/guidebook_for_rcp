@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Views &amp; triggers · RCP Trace Guide</title>
+<meta name="description" content="Trace 07 of the RCP Trace Guide: what Oracle itself does when your INSERT arrives: triggers, subtype tables, views, and packages.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 11 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html" aria-current="page"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace" id="main">
+<p class="trace__crumb">TRACE <b>07</b> / 11 · inside Oracle</p>
+<p class="kicker">Trace 07 · Views &amp; triggers</p>
+<h1>The database runs code too.</h1>
+<p class="lede">So far every trace ended at an INSERT. This one continues past it: Oracle fires triggers, fills subtype tables, and refuses illegal mutations: all inside the statement you already sent. The database in this project is an active participant, not a passive filing cabinet.</p>
+
+<section class="step">
+<h2>BEFORE INSERT: deriving a column you never sent</h2>
+<p><code>RESEARCHER_PROFILE</code> carries a column <code>academic_type</code>: <code>STUDENT</code> or <code>FACULTY</code>. The application never supplies it. A BEFORE INSERT trigger computes it from the <code>role</code> that was supplied, using a mapping table:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">database/06_enhanced_er_migration.sql</span><span class="code-frame__lines">lines 109-125</span></figcaption>
+<pre><code class="language-sql">CREATE OR REPLACE TRIGGER TRG_PROFILE_ACADEMIC_TYPE_BI
+BEFORE INSERT ON RESEARCHER_PROFILE
+FOR EACH ROW
+DECLARE
+  v_academic_type ACADEMIC_CLASSIFICATION_MAP.academic_type%TYPE;
+BEGIN
+  SELECT academic_type
+  INTO v_academic_type
+  FROM ACADEMIC_CLASSIFICATION_MAP
+  WHERE role = :NEW.role;
+
+  :NEW.academic_type := v_academic_type;
+EXCEPTION
+  WHEN NO_DATA_FOUND THEN
+    RAISE_APPLICATION_ERROR(-20059, 'No academic classification mapping exists for role');
+END;
+/</code></pre>
+</figure>
+<ul>
+<li><code>BEFORE INSERT ... FOR EACH ROW</code>: the body runs once per inserted row, before the row is written. It can still change the row.</li>
+<li><code>:NEW.column</code>: the row being inserted. Reading <code>:NEW.role</code>, writing <code>:NEW.academic_type := ...</code> is editing the incoming data in place.</li>
+<li><code>SELECT ... INTO variable</code>: PL/SQL's way of fetching one value into a local variable. <code>%TYPE</code> declares the variable with the same type as the referenced column, so they can never drift apart.</li>
+<li><code>EXCEPTION WHEN NO_DATA_FOUND</code>: if the mapping table has no entry for the role, the lookup raises; the handler converts it into a clean application error with <code>RAISE_APPLICATION_ERROR</code>. The INSERT dies with message <code>ORA-20059</code>.</li>
+</ul>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>A trigger is an observer hooked into the storage engine itself: except it runs <em>inside</em> the same transaction, can mutate the value being saved, and cannot be unregistered by forgetting a line of app code.</p></div>
+</section>
+
+<section class="step">
+<h2>AFTER INSERT: one INSERT becomes three rows</h2>
+<p>Immediately after the profile row lands, a second trigger maintains the specialization tables: the enhanced-ER part of the model, where STUDENT and FACULTY are subtypes with their own attributes:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">database/06_enhanced_er_migration.sql</span><span class="code-frame__lines">lines 153-171</span></figcaption>
+<pre><code class="language-sql">CREATE OR REPLACE TRIGGER TRG_PROFILE_SUBTYPE_DEFAULT
+AFTER INSERT ON RESEARCHER_PROFILE
+FOR EACH ROW
+BEGIN
+  IF :NEW.academic_type = 'STUDENT' THEN
+    INSERT INTO STUDENT_RESEARCHER (
+      researcher_id, academic_type, student_number, degree_program
+    ) VALUES (
+      :NEW.researcher_id, 'STUDENT', 'STUDENT-' || :NEW.researcher_id, 'Undeclared'
+    );
+  ELSE
+    INSERT INTO FACULTY_RESEARCHER (
+      researcher_id, academic_type, faculty_rank, office
+    ) VALUES (
+      :NEW.researcher_id, 'FACULTY', 'Unspecified', 'Unassigned'
+    );
+  END IF;
+END;
+/</code></pre>
+</figure>
+<p>So the registration INSERT you traced in Trace 04 actually writes <strong>three</strong> rows: the profile, the session, and the subtype row created here: all inside one transaction. The subtype tables pin their identity with constraints worth reading closely:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">database/06_enhanced_er_migration.sql</span><span class="code-frame__lines">lines 75-85</span></figcaption>
+<pre><code class="language-sql">CREATE TABLE STUDENT_RESEARCHER (
+  researcher_id NUMBER NOT NULL,
+  academic_type VARCHAR2(20) DEFAULT 'STUDENT' NOT NULL,
+  student_number VARCHAR2(100) DEFAULT 'UNASSIGNED' NOT NULL,
+  degree_program VARCHAR2(200) DEFAULT 'Undeclared' NOT NULL,
+  CONSTRAINT pk_student_researcher PRIMARY KEY (researcher_id),
+  CONSTRAINT fk_student_researcher_parent FOREIGN KEY (researcher_id, academic_type)
+    REFERENCES RESEARCHER_PROFILE (researcher_id, academic_type),
+  CONSTRAINT uq_student_researcher_acad UNIQUE (researcher_id, academic_type),
+  CONSTRAINT ck_student_researcher_type CHECK (academic_type = 'STUDENT')
+);</code></pre>
+</figure>
+<p>The CHECK constraint freezes <code>academic_type</code> to <code>'STUDENT'</code> in this table, and the foreign key references the parent on <em>both</em> columns: so a student row can only ever attach to a profile whose derived type is also STUDENT. A researcher cannot be both subtypes and cannot be the wrong subtype: that is the ER specialization rule, enforced mechanically.</p>
+</section>
+
+<section class="step">
+<h2>Guard triggers: some mutations are simply illegal</h2>
+<p>Because <code>academic_type</code> is derived, letting anyone UPDATE it would corrupt the model. A guard trigger makes the column read-only after insert, and re-checks it whenever <code>role</code> changes:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">database/06_enhanced_er_migration.sql</span><span class="code-frame__lines">lines 127-146</span></figcaption>
+<pre><code class="language-sql">CREATE OR REPLACE TRIGGER TRG_PROFILE_ACADEMIC_TYPE_GUARD
+BEFORE UPDATE OF academic_type, role ON RESEARCHER_PROFILE
+FOR EACH ROW
+DECLARE
+  v_academic_type ACADEMIC_CLASSIFICATION_MAP.academic_type%TYPE;
+BEGIN
+  IF UPDATING('ACADEMIC_TYPE') THEN
+    RAISE_APPLICATION_ERROR(-20060, 'academic_type is derived and cannot be updated');
+  END IF;
+
+  IF UPDATING('ROLE') THEN
+    SELECT academic_type
+    INTO v_academic_type
+    FROM ACADEMIC_CLASSIFICATION_MAP
+    WHERE role = :NEW.role;
+
+    IF v_academic_type &lt;&gt; :OLD.academic_type THEN
+      RAISE_APPLICATION_ERROR(-20061, 'role change would cross researcher specialization');
+    END IF;
+  END IF;
+...</code></pre>
+</figure>
+<p><code>:OLD</code> is the row before the update, <code>:NEW</code> the row after; comparing them is how a trigger detects what actually changed. The second guard says: you may not promote a STUDENT profile into a FACULTY role by UPDATE, because the subtype rows would no longer match. The system forces a deliberate migration instead of a silent one.</p>
+</section>
+
+<section class="step">
+<h2>Views: named queries as stable interfaces</h2>
+<p>A view stores a SELECT and lets you query it like a table. RCP uses them to hand the application pre-joined, pre-filtered results: the open-posts directory, for instance, is one view:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">database/03_views_and_plsql.sql</span><span class="code-frame__lines">lines 6-13</span></figcaption>
+<pre><code class="language-sql">CREATE OR REPLACE VIEW V_OPEN_RESEARCH_POSTS AS
+SELECT p.post_id, p.title, p.description, p.role_type, p.deadline, p.status,
+       profile.full_name AS owner_name, profile.researcher_id AS owner_id,
+       (SELECT COUNT(*) FROM POST_REQUIRED_AREA WHERE post_id = p.post_id) AS required_areas,
+       (SELECT COUNT(*) FROM POST_REQUIRED_SKILL WHERE post_id = p.post_id) AS required_skills
+FROM RESEARCH_POST p
+JOIN RESEARCHER_PROFILE profile ON profile.researcher_id = p.posted_by_researcher_id
+WHERE p.status = 'OPEN' AND p.deadline &gt; SYSDATE;</code></pre>
+</figure>
+<p>Three reasons this exists as a view instead of being inlined in application code:</p>
+<ul>
+<li><strong>One definition of "open post."</strong> Status OPEN and a future deadline, decided once, used everywhere.</li>
+<li><strong>The JOIN lives where the schema lives.</strong> If the tables change, the view is fixed in one place.</li>
+<li><strong>Least privilege.</strong> The runtime user can be granted SELECT on views without holding SELECT on every underlying table.</li>
+</ul>
+</section>
+
+<section class="step">
+<h2>Packages: procedures with a namespace</h2>
+<p>For logic with several cooperating procedures, PL/SQL groups them into a package: a spec (the interface) plus a body (the implementation). The contribution reconciler keeps derived publication data consistent:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">database/06_enhanced_er_migration.sql</span><span class="code-frame__lines">lines 512-518</span></figcaption>
+<pre><code class="language-sql">CREATE OR REPLACE PACKAGE RCP_CONTRIBUTION_SYNC AUTHID DEFINER AS
+  PROCEDURE reconcile_publication(p_publication_id NUMBER);
+END RCP_CONTRIBUTION_SYNC;
+/
+
+CREATE OR REPLACE PACKAGE BODY RCP_CONTRIBUTION_SYNC AS
+  PROCEDURE reconcile_publication(p_publication_id NUMBER) IS
+  BEGIN
+    DELETE FROM PUBLICATION_CONTRIBUTION pc
+    WHERE pc.publication_id = p_publication_id
+      AND NOT EXISTS ( ... );</code></pre>
+</figure>
+<ul>
+<li>The <strong>spec</strong> is the contract callers see; the <strong>body</strong> can change without breaking them. Splitting interface from implementation, Java-interface style.</li>
+<li><code>AUTHID DEFINER</code> means the procedure runs with the privileges of its owner (<code>RCP_OWNER</code>), not the caller (<code>RCP_APP</code>): a controlled privilege escalation, used so the runtime user can trigger maintenance logic it is not allowed to run directly.</li>
+<li>Call it from SQL as <code>RCP_CONTRIBUTION_SYNC.reconcile_publication(:id)</code>: the package name is the namespace.</li>
+</ul>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>Package spec ≈ <code>interface</code>, package body ≈ the implementing <code>class</code>, <code>AUTHID DEFINER</code> ≈ a method running under a different security principal. The database has had all three since before most frameworks existed.</p></div>
+</section>
+
+<section class="step">
+<h2>The full chain, one registration</h2>
+<p>Putting Traces 04-07 together, registering the researcher "Ayesha Rahman" does all of this:</p>
+<ol>
+<li><code>POST /api/auth/register</code> validates and hashes (Trace 04).</li>
+<li><code>withTransaction</code> borrows a pooled connection (Trace 05).</li>
+<li>INSERT into <code>RESEARCHER_PROFILE</code>: <code>TRG_PROFILE_ACADEMIC_TYPE_BI</code> derives <code>academic_type</code> from the role.</li>
+<li><code>TRG_PROFILE_SUBTYPE_DEFAULT</code> inserts the matching <code>STUDENT_RESEARCHER</code> or <code>FACULTY_RESEARCHER</code> row.</li>
+<li>INSERT into <code>USER_SESSION</code> with the hashed token.</li>
+<li>Commit: all rows land together, or none do.</li>
+</ol>
+<p>One HTTP request, one transaction, five database objects cooperating. That is the whole platform in miniature.</p>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="schema.html"><small>◀ Trace 06</small> The schema</a>
+<a class="pager__btn" href="security.html">Next: security <small>Trace 08 ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>

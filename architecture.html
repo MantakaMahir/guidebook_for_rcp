@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The architecture · RCP Trace Guide</title>
+<meta name="description" content="Trace 02 of the RCP Trace Guide: where every file lives and who is allowed to call whom.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 11 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html" aria-current="page"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace" id="main">
+<p class="trace__crumb">TRACE <b>02</b> / 11 · the map</p>
+<p class="kicker">Trace 02 · The architecture</p>
+<h1>One repo, three layers, one rule.</h1>
+<p class="lede">Before reading any code, hold the whole shape in your head. RCP is a single repository whose folders map one-to-one onto layers of a stack. Once you know which folder you are in, you already know what the code is allowed to do.</p>
+
+<ul class="stack-flow" aria-label="The layers of the platform">
+<li><span class="stack-flow__layer">FRAME 0 · src/app</span><span class="stack-flow__name">Pages &amp; routes</span><p class="stack-flow__detail">Every URL is a file here. Pages render HTML; <code>api/</code> routes answer JSON.</p></li>
+<li><span class="stack-flow__layer">FRAME 1 · src/server</span><span class="stack-flow__name">Business logic</span><p class="stack-flow__detail">Validation, authorization, and the SQL that talks to Oracle. Server-only.</p></li>
+<li><span class="stack-flow__layer">FRAME 2 · src/types</span><span class="stack-flow__name">Shared contracts</span><p class="stack-flow__detail">TypeScript interfaces describing every row and payload.</p></li>
+<li><span class="stack-flow__layer">FRAME 3 · database/</span><span class="stack-flow__name">Oracle DDL</span><p class="stack-flow__detail">Numbered SQL scripts: schema, seeds, views, security, tests.</p></li>
+</ul>
+
+<section class="step">
+<h2>The folder map is the architecture</h2>
+<p>Open the repository root. Each top-level folder is one concern, and the dependency arrows only ever point downward: pages call server modules, server modules call the database layer, and nothing points back up:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">repository root · folder map</span><span class="code-frame__lines">structure</span></figcaption>
+<pre><code class="language-text">research-collaboration-platform/
+├─ src/
+│  ├─ app/                 # the website: one folder per URL
+│  │  ├─ page.tsx          #   home page            →  /
+│  │  ├─ (public)/         #   public directories   →  /researchers, /publications, /opportunities
+│  │  ├─ (auth)/           #   login &amp; register     →  /login, /register
+│  │  ├─ dashboard/        #   signed-in workspace  →  /dashboard/...
+│  │  └─ api/              #   JSON endpoints       →  /api/auth/login, /api/posts ...
+│  ├─ server/              # business logic + SQL (never imported by the browser)
+│  │  ├─ db-core.ts        #   the Oracle connection pool
+│  │  ├─ auth.ts           #   sessions, registration, login
+│  │  ├─ posts.ts          #   collaboration posts
+│  │  └─ ...
+│  └─ types/domain.ts      # shared TypeScript interfaces
+├─ database/               # Oracle scripts, run in numeric order
+│  ├─ 01_schema.sql        #   CREATE TABLE ... (20 tables)
+│  ├─ 02_seed_data.sql     #   INSERT demo rows
+│  ├─ 03_views_and_plsql.sql
+│  ├─ 04_security.sql      #   grants to the RCP_APP runtime user
+│  └─ 05_database_tests.sql
+├─ tests/                  # unit + integration tests
+└─ scripts/                # local setup helpers</code></pre>
+</figure>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p><code>src/app</code> is your controllers and views, <code>src/server</code> is the service layer, <code>src/types</code> is the DTO package, and <code>database/</code> is your migration scripts. The difference: there is no separate "view template" language: React components return HTML directly, so the controller and the view live in one function.</p></div>
+</section>
+
+<section class="step">
+<h2>Two kinds of file inside <code>src/app</code></h2>
+<p>Next.js, the framework RCP uses, treats a file named <code>page.tsx</code> as a page and a file named <code>route.ts</code> as an API endpoint. That naming convention <em>is</em> the routing table: there is no separate routes file to maintain.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>File on disk</th><th>URL it serves</th><th>What it returns</th></tr></thead>
+<tbody>
+<tr><td><code>src/app/(public)/researchers/page.tsx</code></td><td><code>/researchers</code></td><td>HTML page</td></tr>
+<tr><td><code>src/app/dashboard/page.tsx</code></td><td><code>/dashboard</code></td><td>HTML page (needs login)</td></tr>
+<tr><td><code>src/app/api/auth/login/route.ts</code></td><td><code>POST /api/auth/login</code></td><td>JSON</td></tr>
+<tr><td><code>src/app/api/posts/route.ts</code></td><td><code>GET/POST /api/posts</code></td><td>JSON</td></tr>
+</tbody>
+</table></div>
+<p>The parentheses in <code>(public)</code> and <code>(auth)</code> are route groups: they organize files without appearing in the URL. So <code>(public)/researchers/page.tsx</code> serves <code>/researchers</code>, not <code>/public/researchers</code>.</p>
+<div class="callout breakpoint"><p class="callout__tag">Breakpoint</p><p>Everything under <code>src/app/api/</code> and everything under <code>src/server/</code> runs only on the server. Any file that begins with <code>import 'server-only'</code> will refuse to compile into browser code: a hard fence the toolchain enforces for you.</p></div>
+</section>
+
+<section class="step">
+<h2>The one rule that keeps it safe</h2>
+<p>Draw a vertical line between the browser and the server. Client code may call server code over HTTP. Server code may call Oracle. Client code may <strong>never</strong> reach Oracle, and Oracle credentials never cross the line.</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">the boundary · who may call whom</span><span class="code-frame__lines">rule</span></figcaption>
+<pre><code class="language-text">┌──────────────┐      HTTPS       ┌─────────────────┐   SQL over a pool   ┌──────────────┐
+│   Browser    │ ───────────────► │  Next.js server │ ──────────────────► │ Oracle (ADB) │
+│  (React UI)  │ ◄─────────────── │  pages + /api   │ ◄────────────────── │  RCP_OWNER   │
+└──────────────┘   HTML / JSON    └─────────────────┘     rows            └──────────────┘
+                                          │
+        no DB credentials, no secrets,    │  the OpenAlex import also
+        no direct SQL ever reach here     │  stays on this side</code></pre>
+</figure>
+<p>This is why <code>src/server/db-core.ts</code>: the file that holds the Oracle connection: is the most important file in the repository, and why the next traces keep returning to it.</p>
+<div class="callout analogy"><p class="callout__tag">In C terms</p><p>Think of the boundary as a privilege ring. The browser is user mode; the server is kernel mode; the database is the hardware. User mode gets hardware access only by making a syscall (an HTTP request) that the kernel validates first.</p></div>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="index.html"><small>◀ Trace 01</small> How the web works</a>
+<a class="pager__btn" href="frontend.html">Next: React pages <small>Trace 03 ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>

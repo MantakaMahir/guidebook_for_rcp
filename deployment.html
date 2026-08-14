@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deployment · RCP Trace Guide</title>
+<meta name="description" content="Trace 11 of the RCP Trace Guide: local development, the Oracle wallet, the cloud database, and going live on Vercel.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 11 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html" aria-current="page"><span class="stack-nav__no">11</span>Deployment</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace" id="main">
+<p class="trace__crumb">TRACE <b>11</b> / 11 · deployment</p>
+<p class="kicker">Trace 11 · Deployment</p>
+<h1>From your laptop to the cloud, same code.</h1>
+<p class="lede">The final trace: how the application boots on a developer machine, how it proves its identity to a cloud Oracle database with a wallet of certificates, and how it ends up serving the world from Vercel. Nothing changes between environments except configuration: which is exactly the point.</p>
+
+<section class="step">
+<h2>Running it locally</h2>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">local development</span><span class="code-frame__lines">PowerShell</span></figcaption>
+<pre><code class="language-powershell">npm install        # download dependencies from package.json
+npm run dev        # start the Next.js dev server on http://localhost:3000</code></pre>
+</figure>
+<p>The server reads its configuration from environment files that Git ignores (<code>.env.local</code> for the app, <code>.env.oracle.local</code> for owner-account database scripts). Secrets live in those files, never in code:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Variable</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>ORACLE_USER</code></td><td>Runtime database user: <code>RCP_APP</code>, the least-privilege account</td></tr>
+<tr><td><code>ORACLE_PASSWORD</code></td><td>Its password</td></tr>
+<tr><td><code>ORACLE_CONNECT_STRING</code></td><td>Which database service to dial, e.g. <code>rcpdb_tp</code></td></tr>
+<tr><td><code>ORACLE_SCHEMA</code></td><td>Schema set on each connection: <code>RCP_OWNER</code></td></tr>
+<tr><td><code>TNS_ADMIN</code></td><td>Directory holding the extracted cloud wallet</td></tr>
+<tr><td><code>ORACLE_WALLET_PASSWORD</code></td><td>Unlocks the wallet's private key</td></tr>
+<tr><td><code>ORACLE_CLIENT_LIB_DIR</code></td><td>Oracle Client libraries for Thick mode</td></tr>
+<tr><td><code>SESSION_SECRET</code></td><td>Server-side secret for session handling</td></tr>
+</tbody>
+</table></div>
+<div class="callout breakpoint"><p class="callout__tag">Breakpoint</p><p>Environment files are in <code>.gitignore</code> for a reason. A password committed to a public repository is a leaked password forever: Git never forgets. The wallet folder is treated the same way.</p></div>
+</section>
+
+<section class="step">
+<h2>The wallet: certificates instead of a bare password</h2>
+<p>The production database is an Oracle Autonomous Database in Oracle Cloud. Connecting to it uses <strong>mTLS</strong>: both sides prove identity with certificates. The "wallet" is a zip of those certificates plus <code>tnsnames.ora</code> (an address book mapping service names like <code>rcpdb_tp</code> to hosts) and <code>sqlnet.ora</code> (TLS configuration). <code>TNS_ADMIN</code> tells the driver where that folder lives.</p>
+<p>The driver itself runs in <strong>Thick mode</strong>: it loads native Oracle Client libraries from <code>ORACLE_CLIENT_LIB_DIR</code> before opening any connection. That one-time initialization lives in <code>db-core.ts</code>, guarded so it runs exactly once per process:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/db-core.ts</span><span class="code-frame__lines">lines 9-21</span></figcaption>
+<pre><code class="language-typescript">let thickInitDone = false
+let thickInitPromise: Promise&lt;void&gt; | undefined
+function initOracleClient(): Promise&lt;void&gt; {
+  if (thickInitDone) return Promise.resolve()
+  if (thickInitPromise) return thickInitPromise
+  const libDir = process.env.ORACLE_CLIENT_LIB_DIR?.trim()
+  if (!libDir) { thickInitDone = true; return Promise.resolve() }
+  thickInitPromise = (async () =&gt; {
+    oracledb.initOracleClient({ libDir })
+    thickInitDone = true
+  })()
+  return thickInitPromise
+}</code></pre>
+</figure>
+<p>The double guard (a done flag <em>and</em> a pending promise) makes the initialization safe under concurrency: even if ten requests race the first pool creation, the client initializes once and everyone else awaits the same promise.</p>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>This is the classic double-checked initialization of a shared resource: <code>volatile</code> flag plus in-flight future: written with <code>async</code>. The pattern exists because native-library init is neither repeatable nor thread-safe, so exactly one caller may ever run it.</p></div>
+</section>
+
+<section class="step">
+<h2>Serverless: when there is no writable disk</h2>
+<p>On Vercel, the platform that hosts RCP in production, a function instance cannot rely on a wallet folder existing at a known path. The solution ships the wallet <em>inside the configuration</em>: the wallet's files are base64-encoded into one environment variable, and the first connection writes them into a temp directory:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/db-core.ts</span><span class="code-frame__lines">lines 36-55</span></figcaption>
+<pre><code class="language-typescript">function resolveConfigDir(): string | undefined {
+  if (resolvedConfigDir !== undefined) return resolvedConfigDir
+  const base64 = process.env.WALLET_BASE64?.trim()
+  if (!base64) { resolvedConfigDir = process.env.TNS_ADMIN?.trim() || undefined; return resolvedConfigDir }
+  const dir = join(tmpdir(), 'rcp-wallet')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    const entries = JSON.parse(Buffer.from(base64, 'base64').toString('utf-8'))
+    for (const [name, content] of Object.entries(entries) as [string, string][]) {
+      let buf = Buffer.from(content, 'base64')
+      if (name === 'sqlnet.ora') {
+        const text = buf.toString('utf-8')
+        buf = Buffer.from(text.replace(/DIRECTORY="[^"]*"/, `DIRECTORY="${dir}"`), 'utf-8')
+      }
+      writeFileSync(join(dir, name), buf)
+    }
+  }
+  resolvedConfigDir = dir
+  return dir
+}</code></pre>
+</figure>
+<p>Two environments, one code path: laptops use <code>TNS_ADMIN</code> pointing at the extracted wallet; Vercel sets <code>WALLET_BASE64</code> and the function materializes the wallet on first use: rewriting <code>sqlnet.ora</code>'s internal <code>DIRECTORY</code> reference so the certificates resolve in their new home. This is why the live site can reach the cloud database without any persistent filesystem.</p>
+</section>
+
+<section class="step">
+<h2>The production topology</h2>
+<ul class="stack-flow" aria-label="Production topology">
+<li><span class="stack-flow__layer">EDGE · VERCEL</span><span class="stack-flow__name">Next.js on Vercel</span><p class="stack-flow__detail">Builds the app, serves pages, runs API routes. Deploys from the GitHub <code>main</code> branch.</p></li>
+<li><span class="stack-flow__layer">CLOUD · OCI</span><span class="stack-flow__name">Autonomous DB <code>RCPDB</code></span><p class="stack-flow__detail">Oracle 19c, Always Free tier, Singapore region. Runtime user <code>RCP_APP</code>, schema <code>RCP_OWNER</code>.</p></li>
+<li><span class="stack-flow__layer">EXTERNAL</span><span class="stack-flow__name">OpenAlex API</span><p class="stack-flow__detail">Public research catalog. Called server-side only, for DOI imports.</p></li>
+</ul>
+<p>A push to <code>main</code> triggers a Vercel build; when the build passes, the new version replaces the old one at <a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a>. Schema changes are not part of that pipeline: they are applied deliberately by running the numbered SQL scripts as the owner account, exactly as Trace 06 described.</p>
+</section>
+
+<section class="step">
+<h2>When Oracle says no: the error decoder</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>Error</th><th>What it means</th><th>Fix</th></tr></thead>
+<tbody>
+<tr><td><code>ORA-12154</code></td><td>Could not resolve the connect string</td><td>Use <code>host:port/service</code> form or check the wallet's <code>tnsnames.ora</code></td></tr>
+<tr><td><code>ORA-01017</code></td><td>Invalid username/password</td><td>Check the credentials in the active environment file</td></tr>
+<tr><td><code>ORA-01031</code></td><td>Insufficient privileges</td><td>DDL runs as <code>RCP_OWNER</code>; app queries as <code>RCP_APP</code></td></tr>
+<tr><td><code>ORA-00942</code></td><td>Table or view does not exist</td><td>Run the numbered database scripts in order</td></tr>
+<tr><td><code>ORA-12514</code></td><td>Unknown service name</td><td>Check the listener and service name</td></tr>
+<tr><td><code>DPI-1047</code></td><td>Oracle Client libraries not found</td><td>Set <code>ORACLE_CLIENT_LIB_DIR</code> to the client directory</td></tr>
+</tbody>
+</table></div>
+<p>Every one of these errors was hit and solved during this project's development: the table is scar tissue, documented so you spend minutes where the original author spent hours.</p>
+</section>
+
+<section class="step">
+<h2>End of the trace</h2>
+<p>You have followed a request from a keystroke to a committed row and back: HTTP fundamentals, the folder architecture, React pages, API routes, the Oracle driver, the schema, triggers and views, security, a full feature lifecycle, testing, and deployment. The sidebar is still there: pick any trace and walk it again with the real repository open beside you. The code you read here is the code that is running right now.</p>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="testing.html"><small>◀ Trace 10</small> Testing</a>
+<a class="pager__btn" href="index.html">Restart <small>Trace 01 ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>

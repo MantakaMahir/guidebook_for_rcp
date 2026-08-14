@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A feature end to end · RCP Trace Guide</title>
+<meta name="description" content="Trace 09 of the RCP Trace Guide: research posts: create, publish, close, notify: through every layer.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 11 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html" aria-current="page"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace" id="main">
+<p class="trace__crumb">TRACE <b>09</b> / 11 · features</p>
+<p class="kicker">Trace 09 · A feature end to end</p>
+<h1>Research posts: draft, publish, close, notify.</h1>
+<p class="lede">Everything you have traced so far meets in one feature. A researcher posts a collaboration opportunity; others apply; the owner closes it and every applicant is notified. This trace walks the server module that owns the whole lifecycle: <code>src/server/posts.ts</code>.</p>
+
+<section class="step">
+<h2>Creating a post: one transaction, several tables</h2>
+<p>A post is not one row: it is a <code>RESEARCH_POST</code> row plus any number of required areas and required skills in two junction tables. All of it commits together:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/posts.ts</span><span class="code-frame__lines">lines 67-80</span></figcaption>
+<pre><code class="language-typescript">export async function createPost(user: SessionUser, raw: unknown): Promise&lt;PostDto&gt; {
+  const input = validatePostInput(raw)
+  const postId = await withTransaction(async (connection) =&gt; {
+    const result = await connection.execute&lt;{ POST_ID: number }&gt;(
+      `INSERT INTO RESEARCH_POST (post_id, posted_by_researcher_id, title, description, role_type, deadline, status)
+       VALUES (RCP_ID_SEQ.NEXTVAL, :researcherId, :title, :description, :roleType, :deadline, 'DRAFT') RETURNING post_id INTO :postId`,
+      { researcherId: user.researcherId, title: input.title, description: input.description, roleType: input.roleType, deadline: new Date(input.deadline), postId: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER } },
+    )
+    const id = (result.outBinds as unknown as { postId: number[] }).postId[0]
+    await replaceRequirements(connection, id, input)
+    return id
+  })
+  return getPost(postId, user) as Promise&lt;PostDto&gt;
+}</code></pre>
+</figure>
+<p>You should recognize every part by now: validation before SQL, sequence for the ID, <code>RETURNING INTO</code> to carry the new ID into the junction inserts, <code>withTransaction</code> making the bundle atomic. New posts start in status <code>'DRAFT'</code>: invisible to everyone but the owner.</p>
+<p>The requirements step also shows defensive SQL: each chosen area is inserted with <code>INSERT ... SELECT ... FROM RESEARCH_AREA WHERE area_id = :areaId AND status = 'ACTIVE'</code>, so an area that was deactivated (or never existed) simply produces no row: and a pre-check counts matches and fails the whole request if any ID was bogus.</p>
+</section>
+
+<section class="step">
+<h2>Ownership: check the row under lock</h2>
+<p>Publishing, editing, and closing all begin with the same two questions: does the post exist, and do you own it? Answered under a row lock:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/posts.ts</span><span class="code-frame__lines">lines 59-65</span></figcaption>
+<pre><code class="language-typescript">async function ownedPost(connection: oracledb.Connection, user: SessionUser, postId: number) {
+  const result = await connection.execute&lt;{ POSTED_BY_RESEARCHER_ID: number; STATUS: PostStatus }&gt;('SELECT posted_by_researcher_id, status FROM RESEARCH_POST WHERE post_id = :postId FOR UPDATE', { postId }, { outFormat: oracledb.OUT_FORMAT_OBJECT })
+  const row = result.rows?.[0]
+  if (!row) throw new PostError('NOT_FOUND')
+  if (row.POSTED_BY_RESEARCHER_ID !== user.researcherId &amp;&amp; user.role !== 'ADMIN') throw new PostError('FORBIDDEN')
+  return row
+}</code></pre>
+</figure>
+<p><code>FOR UPDATE</code> locks the selected row until the transaction ends. If two requests try to change the same post at once, the second waits for the first to commit or roll back before it proceeds: the database serializes them for you.</p>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p><code>SELECT ... FOR UPDATE</code> is <code>synchronized</code> on a database row: a mutex held inside the transaction. The check-then-act pattern (read owner, then update) is only safe because the lock spans both steps.</p></div>
+</section>
+
+<section class="step">
+<h2>State machine: DRAFT → OPEN → CLOSED</h2>
+<p>A post's <code>status</code> column has legal transitions, and the code enforces them explicitly. Publishing re-validates the business rules one last time:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/posts.ts</span><span class="code-frame__lines">lines 94-107</span></figcaption>
+<pre><code class="language-typescript">export async function publishPost(user: SessionUser, postId: number): Promise&lt;PostDto&gt; {
+  await withTransaction(async (connection) =&gt; {
+    const row = await ownedPost(connection, user, postId)
+    if (row.STATUS !== 'DRAFT') throw new PostError('INVALID_TRANSITION')
+    const result = await connection.execute&lt;{ DEADLINE: Date; REQUIREMENT_COUNT: number }&gt;(
+      `SELECT p.deadline, (SELECT COUNT(*) FROM POST_REQUIRED_AREA WHERE post_id = p.post_id) + (SELECT COUNT(*) FROM POST_REQUIRED_SKILL WHERE post_id = p.post_id) AS requirement_count
+       FROM RESEARCH_POST p WHERE p.post_id = :postId`, { postId }, { outFormat: oracledb.OUT_FORMAT_OBJECT },
+    )
+    const check = result.rows?.[0]
+    if (!check || check.REQUIREMENT_COUNT === 0 || check.DEADLINE &lt;= new Date()) throw new PostError('INVALID_POST')
+    await connection.execute("UPDATE RESEARCH_POST SET status = 'OPEN', updated_at = SYSTIMESTAMP WHERE post_id = :postId", { postId })
+  })
+  return getPost(postId, user) as Promise&lt;PostDto&gt;
+}</code></pre>
+</figure>
+<p>A post may only go public if it has at least one requirement and a deadline in the future. The same module's <code>updatePost</code> and <code>closePost</code> guard their own transitions: a CLOSED post can never reopen, a DEACTIVATED post can never change. Illegal transitions throw <code>INVALID_TRANSITION</code> and the row is untouched.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>From</th><th>To</th><th>Guard</th></tr></thead>
+<tbody>
+<tr><td>DRAFT</td><td>OPEN</td><td>owner only, future deadline, ≥1 requirement</td></tr>
+<tr><td>DRAFT / OPEN</td><td>CLOSED</td><td>owner or admin; notifies pending applicants</td></tr>
+<tr><td>anything else</td><td>-</td><td><code>INVALID_TRANSITION</code>, no change</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Closing: side effects inside the same transaction</h2>
+<p>When a post closes, every applicant with a live application must hear about it. The notifications are written in the very same transaction as the status change: a closed post with unsent notifications cannot happen:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/posts.ts</span><span class="code-frame__lines">lines 109-117</span></figcaption>
+<pre><code class="language-typescript">export async function closePost(user: SessionUser, postId: number): Promise&lt;void&gt; {
+  await withTransaction(async (connection) =&gt; {
+    const row = await ownedPost(connection, user, postId)
+    if (row.STATUS !== 'DRAFT' &amp;&amp; row.STATUS !== 'OPEN') throw new PostError('INVALID_TRANSITION')
+    await connection.execute("UPDATE RESEARCH_POST SET status = 'CLOSED', closed_at = SYSTIMESTAMP, updated_at = SYSTIMESTAMP WHERE post_id = :postId", { postId })
+    const applicants = await connection.execute&lt;{ APPLICANT_RESEARCHER_ID: number }&gt;("SELECT applicant_researcher_id FROM RESEARCH_APPLICATION WHERE post_id = :postId AND status IN ('PENDING', 'SHORTLISTED')", { postId }, { outFormat: oracledb.OUT_FORMAT_OBJECT })
+    for (const applicant of applicants.rows ?? []) await insertNotification(connection, { recipientId: applicant.APPLICANT_RESEARCHER_ID, actorId: user.researcherId, postId, type: 'POST_CLOSED', message: 'A research opportunity you applied to is now closed.' })
+  })
+}</code></pre>
+</figure>
+<p><code>insertNotification</code> receives the open connection on purpose: it writes into the same transaction rather than opening its own. Notifications are also <em>recipient-owned</em>: a user's notification feed queries only rows where they are the recipient, enforced server-side.</p>
+</section>
+
+<section class="step">
+<h2>The other big flow: OpenAlex import</h2>
+<p>The same discipline scales up for the platform's integration feature, importing publications from the OpenAlex catalog by DOI:</p>
+<ul>
+<li><strong>Provider calls stay on the server.</strong> <code>src/server/integrations/openalex.ts</code> fetches DOI metadata; the optional API key never leaves the server process.</li>
+<li><strong>Preview before commit.</strong> The client sends DOI strings and receives a classified preview: matching, new, or excluded: without writing anything.</li>
+<li><strong>Atomic batches.</strong> On confirmation the server re-fetches the selected records and inserts each batch (capped at 25 works) in one transaction: publication rows, ordered authors, area links, citation snapshot, and an <code>EXTERNAL_PUBLICATION_SOURCE</code> provenance row recording where the data came from. All of it commits together or not at all.</li>
+</ul>
+<div class="callout note"><p class="callout__tag">Pattern to remember</p><p>Every write feature in this codebase has the same skeleton: validate → authorize → lock/read → mutate inside <code>withTransaction</code> → return fresh state. When you build the next feature, copy the skeleton.</p></div>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="security.html"><small>◀ Trace 08</small> Security</a>
+<a class="pager__btn" href="testing.html">Next: testing <small>Trace 10 ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>

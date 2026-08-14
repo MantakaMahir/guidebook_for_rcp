@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The schema · RCP Trace Guide</title>
+<meta name="description" content="Trace 06 of the RCP Trace Guide: twenty normalized tables, and the constraints that enforce the rules.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 11 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html" aria-current="page"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace" id="main">
+<p class="trace__crumb">TRACE <b>06</b> / 11 · the schema</p>
+<p class="kicker">Trace 06 · The schema</p>
+<h1>The rules live in the tables, not in the code.</h1>
+<p class="lede">Twenty production tables, one sequence, and a wall of constraints. This is the DBMS coursework made physical: every business rule that must never be broken is declared in DDL, so the database refuses bad data even if a bug slips through the application.</p>
+
+<section class="step">
+<h2>The territory, in five domains</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>Domain</th><th>Tables</th><th>What they hold</th></tr></thead>
+<tbody>
+<tr><td>Identity</td><td><code>UNIVERSITY</code>, <code>RESEARCHER_PROFILE</code>, <code>USER_SESSION</code></td><td>Who exists, where they belong, who is logged in</td></tr>
+<tr><td>Expertise</td><td><code>RESEARCH_AREA</code>, <code>RESEARCHER_AREA</code>, <code>SKILL</code>, <code>RESEARCHER_SKILL</code></td><td>Areas and skills, linked to researchers with levels</td></tr>
+<tr><td>Publications</td><td><code>PUBLICATION</code>, <code>PUBLICATION_AUTHOR</code>, <code>PUBLICATION_AREA</code>, <code>CITATION_RECORD</code>, <code>EXTERNAL_PUBLICATION_SOURCE</code></td><td>Papers, ordered author lists, citation snapshots, import provenance</td></tr>
+<tr><td>Collaboration</td><td><code>CONNECTION</code>, <code>RESEARCH_POST</code>, <code>POST_REQUIRED_AREA</code>, <code>POST_REQUIRED_SKILL</code>, <code>RESEARCH_APPLICATION</code>, <code>APPLICATION_PUBLICATION</code>, <code>NOTIFICATION</code></td><td>Posts, applications, connections, notifications</td></tr>
+<tr><td>Oversight</td><td><code>AUDIT_LOG</code> (+ enhanced-ER tables from Trace 07)</td><td>Who did what, and the student/faculty specialization</td></tr>
+</tbody>
+</table></div>
+<p>Notice the naming pattern of the middle two domains: <code>X</code>, <code>Y</code>, and <code>X_Y</code>. A standalone noun gets its own table; a relationship between two nouns gets a junction table named after both.</p>
+</section>
+
+<section class="step">
+<h2>Reading a table definition</h2>
+<p>The profile table is the heart of the system. Read its DDL the way you would read a class declaration: columns are fields, constraints are invariants:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">database/01_schema.sql</span><span class="code-frame__lines">lines 17-47</span></figcaption>
+<pre><code class="language-sql">CREATE TABLE RESEARCHER_PROFILE (
+  researcher_id NUMBER PRIMARY KEY,
+  email VARCHAR2(320) NOT NULL,
+  password_hash VARCHAR2(500) NOT NULL,
+  role VARCHAR2(20) NOT NULL,
+  status VARCHAR2(20) DEFAULT 'ACTIVE' NOT NULL,
+  full_name VARCHAR2(200) NOT NULL,
+  university_id NUMBER,
+  designation VARCHAR2(150),
+  country VARCHAR2(100),
+  contact_phone VARCHAR2(50),
+  bio CLOB,
+  profile_image_url VARCHAR2(500),
+  google_scholar_url VARCHAR2(500),
+  orcid_id VARCHAR2(19),
+  openalex_author_id VARCHAR2(100),
+  personal_website VARCHAR2(500),
+  profile_visibility VARCHAR2(20) DEFAULT 'PUBLIC' NOT NULL,
+  contact_visibility VARCHAR2(20) DEFAULT 'PRIVATE' NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+  updated_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+  CONSTRAINT fk_rp_university FOREIGN KEY (university_id)
+    REFERENCES UNIVERSITY (university_id),
+  CONSTRAINT ck_rp_role CHECK (role IN ('STUDENT', 'RESEARCHER', 'PROFESSOR', 'ADMIN')),
+  CONSTRAINT ck_rp_status CHECK (status IN ('ACTIVE', 'BLOCKED', 'DEACTIVATED')),
+  CONSTRAINT ck_rp_profile_vis CHECK (profile_visibility IN ('PUBLIC', 'PRIVATE')),
+  CONSTRAINT ck_rp_contact_vis CHECK (contact_visibility IN ('PUBLIC', 'PRIVATE')),
+  CONSTRAINT ck_rp_orcid CHECK (
+    orcid_id IS NULL OR REGEXP_LIKE(orcid_id, '^[0-9]{4}-[0-9]{4}-[0-9]{4}-[0-9X]{4}$')
+  )
+);</code></pre>
+</figure>
+<p>Constraint by constraint, this is what the database enforces for free:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Constraint</th><th>Kind</th><th>What it guarantees</th></tr></thead>
+<tbody>
+<tr><td><code>researcher_id ... PRIMARY KEY</code></td><td>PK</td><td>Every profile has exactly one unique identity: the value comes from <code>RCP_ID_SEQ</code> (Trace 05)</td></tr>
+<tr><td><code>NOT NULL</code> columns</td><td>required field</td><td>No profile without email, hash, role, name: the INSERT is rejected, the app cannot forget</td></tr>
+<tr><td><code>DEFAULT 'ACTIVE'</code></td><td>default</td><td>Omitting the column still yields a sane value</td></tr>
+<tr><td><code>fk_rp_university</code></td><td>FK</td><td><code>university_id</code> must point at a real university row, or be NULL (independent researcher). Orphan references are impossible</td></tr>
+<tr><td><code>ck_rp_role</code></td><td>CHECK</td><td><code>role</code> is one of four values: an enum enforced by the engine</td></tr>
+<tr><td><code>ck_rp_orcid</code></td><td>CHECK + regex</td><td>An ORCID, when present, must match the official <code>0000-0000-0000-000X</code> shape</td></tr>
+</tbody>
+</table></div>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>A CHECK constraint is an <code>if</code> you write once and the database runs on every INSERT and UPDATE forever. The difference from application validation: app validation can be bypassed by a bug or a second client; the constraint cannot. RCP does both: validate in <code>src/server</code> for good error messages, constrain in DDL for truth.</p></div>
+</section>
+
+<section class="step">
+<h2>Sessions are rows too</h2>
+<p>Logging in does not create magic server state: it inserts a row. The session table is how "who is logged in" survives restarts and scales across instances:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">database/01_schema.sql</span><span class="code-frame__lines">lines 49-59</span></figcaption>
+<pre><code class="language-sql">CREATE TABLE USER_SESSION (
+  session_id NUMBER PRIMARY KEY,
+  researcher_id NUMBER NOT NULL,
+  token_hash VARCHAR2(128) NOT NULL,
+  expires_at TIMESTAMP NOT NULL,
+  revoked_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+  CONSTRAINT fk_session_researcher FOREIGN KEY (researcher_id)
+    REFERENCES RESEARCHER_PROFILE (researcher_id),
+  CONSTRAINT uq_session_token UNIQUE (token_hash)
+);</code></pre>
+</figure>
+<p>Note what is stored: <code>token_hash</code>, not the token. The browser holds the real token in a cookie; the database keeps only its SHA-256 digest. If the database is ever read by an attacker, sessions cannot be hijacked from it. Trace 08 follows the token through login and logout: logout is just <code>UPDATE ... SET revoked_at</code> on the row you are looking at.</p>
+</section>
+
+<section class="step">
+<h2>Many-to-many, the junction pattern</h2>
+<p>A researcher has many areas; an area belongs to many researchers. Relational databases model that with a third table whose primary key is <em>both foreign keys together</em>:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">database/01_schema.sql</span><span class="code-frame__lines">lines 71-86</span></figcaption>
+<pre><code class="language-sql">CREATE TABLE RESEARCHER_AREA (
+  researcher_id NUMBER NOT NULL,
+  area_id NUMBER NOT NULL,
+  expertise_level NUMBER(1) NOT NULL,
+  years_experience NUMBER(2) DEFAULT 0 NOT NULL,
+  is_primary CHAR(1) DEFAULT 'N' NOT NULL,
+  CONSTRAINT pk_researcher_area PRIMARY KEY (researcher_id, area_id),
+  CONSTRAINT fk_ra_researcher FOREIGN KEY (researcher_id)
+    REFERENCES RESEARCHER_PROFILE (researcher_id),
+  CONSTRAINT fk_ra_area FOREIGN KEY (area_id)
+    REFERENCES RESEARCH_AREA (area_id),
+  ...
+);</code></pre>
+</figure>
+<ul>
+<li>The <strong>composite primary key</strong> <code>(researcher_id, area_id)</code> makes duplicates impossible: one link per pair, enforced by the engine.</li>
+<li>The junction table carries <strong>attributes of the relationship itself</strong>: expertise level, years, whether this is the researcher's primary area. That is why it is a real table and not just a link.</li>
+<li>The same pattern repeats for <code>RESEARCHER_SKILL</code>, <code>PUBLICATION_AUTHOR</code> (with author order), <code>POST_REQUIRED_AREA</code> (with weight), and four more junctions.</li>
+</ul>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>An ER diagram's M:N relationship becomes a class whose fields are two references plus the relationship's own data: <code>class ResearcherArea { Researcher researcher; Area area; int expertiseLevel; }</code>: with a uniqueness constraint on the pair of references.</p></div>
+</section>
+
+<section class="step">
+<h2>Normalization, as practiced</h2>
+<p>The schema is normalized on purpose, and the payoff is visible in the data: university names exist once in <code>UNIVERSITY</code> and are referenced by ID everywhere, so renaming a university is one UPDATE instead of thousands. Research areas are a controlled vocabulary (<code>RESEARCH_AREA</code>) rather than free text, which is what makes faceted search and matching possible later. The cost: more JOINs: is paid in the views you meet in the next trace.</p>
+<div class="callout breakpoint"><p class="callout__tag">Breakpoint: the scripts run in order</p><p><code>database/</code> is numbered for a reason: <code>00_reset</code> drops everything, <code>01_schema</code> creates tables, <code>02_seed_data</code> fills them, <code>03</code> adds views and PL/SQL, <code>04</code> grants privileges to the runtime user, <code>05</code> tests the result. Each file assumes the previous ones ran: exactly like numbered migration scripts.</p></div>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="database.html"><small>◀ Trace 05</small> Node ↔ Oracle</a>
+<a class="pager__btn" href="plsql.html">Next: views &amp; triggers <small>Trace 07 ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>

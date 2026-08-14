@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backend: API routes · RCP Trace Guide</title>
+<meta name="description" content="Trace 04 of the RCP Trace Guide: following one registration request from the form to the database and back.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 11 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html" aria-current="page"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace" id="main">
+<p class="trace__crumb">TRACE <b>04</b> / 11 · backend</p>
+<p class="kicker">Trace 04 · Backend</p>
+<h1>An API route is one exported function per HTTP method.</h1>
+<p class="lede">Trace the registration request end to end: the form in the browser POSTs JSON to <code>/api/auth/register</code>, a single file receives it, guards it, validates it, writes two rows to Oracle in one transaction, and answers with a cookie and a status code.</p>
+
+<section class="step">
+<h2>The receiving function</h2>
+<p>The file <code>src/app/api/auth/register/route.ts</code> exists, so the endpoint <code>POST /api/auth/register</code> exists. The framework calls whichever exported function matches the HTTP method: <code>GET</code>, <code>POST</code>, <code>PUT</code>, <code>PATCH</code>, <code>DELETE</code>. This file exports <code>POST</code>:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/app/api/auth/register/route.ts</span><span class="code-frame__lines">lines 8-27</span></figcaption>
+<pre><code class="language-typescript">export async function POST(request: Request) {
+  const crossOrigin = rejectCrossOrigin(request)
+  if (crossOrigin) return crossOrigin
+  if (!rateLimit(`register:${clientAddress(request)}`, 5, 60_000)) return Response.json({ error: 'RATE_LIMITED', message: 'Too many attempts. Try again later.' }, { status: 429 })
+  if (bodyTooLarge(request)) return Response.json({ error: 'PAYLOAD_TOO_LARGE', message: 'Request body too large.' }, { status: 413 })
+  let input: unknown
+  try {
+    input = await request.json()
+  } catch {
+    return Response.json({ error: 'INVALID_REQUEST', message: 'Invalid request.' }, { status: 400 })
+  }
+  if (input &amp;&amp; typeof input === 'object' &amp;&amp; typeof (input as { email?: unknown }).email === 'string'
+    &amp;&amp; !rateLimit(`register-account:${normalizeEmail((input as { email: string }).email)}`, 5, 60_000)) {
+    return Response.json({ error: 'RATE_LIMITED', message: 'Too many attempts. Try again later.' }, { status: 429 })
+  }
+
+  try {
+    const { user, token, expiresAt } = await registerAccount(input)
+    await setSessionCookie(token, expiresAt)
+    return Response.json({ user }, { status: 201 })</code></pre>
+</figure>
+<p>The whole file is 34 lines. Read it as a pipeline of guards followed by one real action:</p>
+<ul>
+<li><strong>Origin guard</strong>: reject cross-site form posts before anything else runs.</li>
+<li><strong>Rate limit</strong>: at most 5 attempts per minute per IP <em>and</em> per email address. Registration is expensive and abusable, so it is throttled twice.</li>
+<li><strong>Size guard</strong>: refuse bodies larger than the limit, so a giant payload cannot waste server memory.</li>
+<li><strong>Parse</strong>: <code>await request.json()</code> deserializes the body. Invalid JSON is a 400, never a crash.</li>
+<li><strong>Act</strong>: <code>registerAccount(input)</code> does the real work (next step), then the session cookie is set and <code>201 Created</code> goes back with the new user as JSON.</li>
+</ul>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>This is a servlet's <code>doPost()</code> written as one exported function. <code>return Response.json(...)</code> is <code>response.getWriter().write(...)</code> plus <code>setStatus(...)</code> in one expression. Early <code>return</code> instead of nested <code>if</code> is the same guard-clause style you would use anywhere.</p></div>
+</section>
+
+<section class="step">
+<h2>The real work: validate, hash, insert: one transaction</h2>
+<p>The route file contains no SQL. That lives one layer down in <code>src/server/auth.ts</code>, where <code>registerAccount</code> validates the input, hashes the password, and writes two rows atomically:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/auth.ts</span><span class="code-frame__lines">lines 66-96</span></figcaption>
+<pre><code class="language-typescript">export async function registerAccount(input: unknown): Promise&lt;{ user: SessionUser; token: string; expiresAt: Date }&gt; {
+  const account = validateRegistration(input)
+  const passwordHash = await hashPassword(account.password)
+  const token = randomBytes(32).toString('base64url')
+  const tokenDigest = tokenHash(token)
+  const expiresAt = new Date(Date.now() + SESSION_DURATION_MS)
+
+  try {
+    const user = await withTransaction(async (connection) =&gt; {
+      const result = await connection.execute&lt;{ RESEARCHER_ID: number }&gt;(
+        `INSERT INTO RESEARCHER_PROFILE (
+          researcher_id, email, password_hash, role, status, full_name
+        ) VALUES (
+          RCP_ID_SEQ.NEXTVAL, :email, :passwordHash, :role, 'ACTIVE', :fullName
+        ) RETURNING researcher_id INTO :researcherId`,
+        {
+          email: account.email,
+          passwordHash,
+          role: account.role,
+          fullName: account.fullName,
+          researcherId: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
+        },
+      )
+      const researcherId = (result.outBinds as unknown as { researcherId: number[] }).researcherId[0]
+      await connection.execute(
+        'INSERT INTO USER_SESSION (session_id, researcher_id, token_hash, expires_at) VALUES (RCP_ID_SEQ.NEXTVAL, :researcherId, :tokenHash, :expiresAt)',
+        { researcherId, tokenHash: tokenDigest, expiresAt },
+      )
+      return { researcherId, email: account.email, fullName: account.fullName, role: account.role }
+    })</code></pre>
+</figure>
+<p>Four ideas packed into those lines:</p>
+<ul>
+<li><strong>Validate first.</strong> <code>validateRegistration</code> throws <code>AuthError</code> on bad email, short password, or unknown role: before anything touches the database.</li>
+<li><strong>Never store the password.</strong> Only <code>hashPassword()</code>'s output is inserted. Trace 08 dissects it.</li>
+<li><strong>Named binds.</strong> <code>:email</code>, <code>:passwordHash</code> are placeholders filled from the object argument: the same protection as a <code>PreparedStatement</code>. No string concatenation into SQL, anywhere in this codebase.</li>
+<li><strong><code>RETURNING ... INTO</code>.</strong> Oracle hands back the generated <code>researcher_id</code> in the same round trip, so the second INSERT can reference it without a follow-up query.</li>
+</ul>
+<div class="callout breakpoint"><p class="callout__tag">Breakpoint: atomicity</p><p>Both INSERTs run inside <code>withTransaction</code>. If the session insert fails, the profile insert is rolled back: you can never end up with a researcher who has no session row mid-registration. Either both rows commit or neither exists. Trace 05 shows how <code>withTransaction</code> is built.</p></div>
+</section>
+
+<section class="step">
+<h2>Errors are status codes, not stack traces</h2>
+<p>The end of the route maps exceptions onto safe responses. The client gets a stable error code and a human message; internal details never leave the server:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/app/api/auth/register/route.ts</span><span class="code-frame__lines">lines 28-33</span></figcaption>
+<pre><code class="language-typescript">  } catch (error) {
+    if (error instanceof AuthError) {
+      return Response.json({ error: 'INVALID_REQUEST', message: 'Unable to create account. Check that all fields are correct.' }, { status: 400 })
+    }
+    return safeServerError()
+  }
+}</code></pre>
+</figure>
+<div class="tablewrap"><table>
+<thead><tr><th>HTTP method</th><th>CRUD meaning</th><th>Examples in RCP</th></tr></thead>
+<tbody>
+<tr><td><code>GET</code></td><td>Read</td><td><code>/api/researchers</code>, <code>/api/posts</code>, <code>/api/notifications</code></td></tr>
+<tr><td><code>POST</code></td><td>Create</td><td><code>/api/auth/register</code>, <code>/api/posts</code>, <code>/api/connections</code></td></tr>
+<tr><td><code>PATCH</code></td><td>Partial update</td><td><code>/api/applications/:id/status</code>, <code>/api/admin/users/:id/status</code></td></tr>
+<tr><td><code>PUT</code></td><td>Replace</td><td><code>/api/publications/:id</code></td></tr>
+<tr><td><code>DELETE</code></td><td>Delete</td><td><code>/api/posts/:id</code></td></tr>
+</tbody>
+</table></div>
+<p>The URL names the resource; the method names the verb. <code>PATCH /api/applications/42/status</code> reads as a sentence: "partially update the status of application 42".</p>
+</section>
+
+<section class="step">
+<h2>The client side of the same call</h2>
+<p>For completeness, here is the browser half you saw in Trace 03: the <code>fetch</code> whose response the route above produces:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/app/(auth)/auth-form.tsx</span><span class="code-frame__lines">lines 20-24</span></figcaption>
+<pre><code class="language-typescript">const response = await fetch(`/api/auth/${mode}`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(Object.fromEntries(form)),
+})</code></pre>
+</figure>
+<p>One request, two files, one boundary. You now know both ends of it.</p>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="frontend.html"><small>◀ Trace 03</small> React pages</a>
+<a class="pager__btn" href="database.html">Next: Node ↔ Oracle <small>Trace 05 ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>

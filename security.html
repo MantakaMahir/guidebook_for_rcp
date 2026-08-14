@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security · RCP Trace Guide</title>
+<meta name="description" content="Trace 08 of the RCP Trace Guide: password hashing, session tokens, injection defense, and least privilege.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 11 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html" aria-current="page"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace" id="main">
+<p class="trace__crumb">TRACE <b>08</b> / 11 · security</p>
+<p class="kicker">Trace 08 · Security</p>
+<h1>Follow a password from keystroke to database.</h1>
+<p class="lede">Security in RCP is not a feature: it is the shape of the code. This trace follows a password from the moment it is typed, shows how a login session is carried without ever exposing the token's secret, and lists the defenses that make whole classes of attacks structurally impossible.</p>
+
+<section class="step">
+<h2>Hashing: the password never exists twice</h2>
+<p>The instant registration validates, the plaintext password is transformed into an <code>scrypt</code> hash and discarded. Only the hash is stored:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/passwords.ts</span><span class="code-frame__lines">lines 8-12</span></figcaption>
+<pre><code class="language-typescript">export async function hashPassword(password: string): Promise&lt;string&gt; {
+  const salt = randomBytes(16)
+  const key = await scrypt(password, salt, KEY_LENGTH) as Buffer
+  return `scrypt$${salt.toString('base64')}$${key.toString('base64')}`
+}</code></pre>
+</figure>
+<ul>
+<li><strong>scrypt</strong> is a key-derivation function deliberately expensive in CPU and memory: computing one hash is fast enough for a login, but trying billions of guesses is economically ruinous for an attacker.</li>
+<li>The <strong>salt</strong> is 16 random bytes, unique per password, stored next to the hash. Identical passwords produce different hashes, so precomputed rainbow tables are useless.</li>
+<li>The stored format <code>scrypt$salt$key</code> is self-describing: the verification function parses it, re-derives with the stored salt, and compares.</li>
+</ul>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/passwords.ts</span><span class="code-frame__lines">lines 14-28</span></figcaption>
+<pre><code class="language-typescript">export async function verifyPassword(password: string, encoded: string): Promise&lt;boolean&gt; {
+  const parts = encoded.split('$')
+  if (parts.length !== 3) return false
+  const [algorithm, saltValue, keyValue] = parts
+  if (algorithm !== 'scrypt' || !saltValue || !keyValue) return false
+
+  try {
+    const salt = Buffer.from(saltValue, 'base64')
+    const expected = Buffer.from(keyValue, 'base64')
+    if (salt.length === 0 || expected.length !== KEY_LENGTH) return false
+    const actual = await scrypt(password, salt, expected.length) as Buffer
+    return timingSafeEqual(actual, expected)
+  } catch {
+    return false
+  }
+}</code></pre>
+</figure>
+<p>Two details that separate professional code from tutorial code:</p>
+<ul>
+<li><strong><code>timingSafeEqual</code></strong> compares in constant time. A normal <code>===</code> returns early on the first differing byte, leaking: via microseconds: how much of the hash matched. Constant-time comparison leaks nothing.</li>
+<li><strong>Every malformed input returns <code>false</code></strong>, never throws. An attacker poking the format gets one uniform answer.</li>
+</ul>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>Think of scrypt as a one-way function with a per-input random nonce: <code>hash(password, salt)</code> is cheap to verify if you know the password, and hopeless to invert if you don't. Storing plaintext: even "encrypted" plaintext you can decrypt: fails the moment the database leaks. Only a one-way hash survives that day.</p></div>
+</section>
+
+<section class="step">
+<h2>Login: uniform failure, then a hashed token</h2>
+<p>Verification alone has a subtle leak: if the server answers faster for "email not found" than for "wrong password", an attacker can enumerate which emails exist. RCP's login defeats that by always running the hash check: against a dummy hash when the account does not exist:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/auth.ts</span><span class="code-frame__lines">lines 110-122</span></figcaption>
+<pre><code class="language-typescript">  return withTransaction(async (connection) =&gt; {
+    const result = await connection.execute&lt;AuthRow&gt;(
+      `SELECT researcher_id, email, password_hash, role, status, full_name
+       FROM RESEARCHER_PROFILE
+       WHERE LOWER(TRIM(email)) = :email`,
+      { email: normalizedEmail },
+      { outFormat: oracledb.OUT_FORMAT_OBJECT },
+    )
+    const account = result.rows?.[0]
+    const passwordMatches = await verifyPassword(password, account?.PASSWORD_HASH ?? dummyPasswordHash)
+    if (!account || account.STATUS !== 'ACTIVE' || !passwordMatches) {
+      throw new AuthError('INVALID_CREDENTIALS')
+    }</code></pre>
+</figure>
+<p>No account, blocked account, or wrong password all fall into the same <code>INVALID_CREDENTIALS</code> path after the same amount of work. On success, a session begins:</p>
+<ul>
+<li><code>randomBytes(32).toString('base64url')</code>: 256 bits of fresh randomness become the session token. Unforgeable because unguessable.</li>
+<li>Only <code>SHA-256(token)</code> is written to <code>USER_SESSION</code>: the token itself lives solely in the user's browser cookie.</li>
+</ul>
+</section>
+
+<section class="step">
+<h2>The cookie: HttpOnly is the moat</h2>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/auth.ts</span><span class="code-frame__lines">lines 177-187</span></figcaption>
+<pre><code class="language-typescript">export function setSessionCookie(token: string, expiresAt: Date): Promise&lt;void&gt; {
+  return cookies().then((cookieStore) =&gt; {
+    cookieStore.set(SESSION_COOKIE, token, {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: process.env.NODE_ENV === 'production',
+      expires: expiresAt,
+      path: '/',
+    })
+  })
+}</code></pre>
+</figure>
+<ul>
+<li><strong><code>httpOnly: true</code></strong>: JavaScript in the browser cannot read this cookie. A successful cross-site-scripting bug still cannot steal the session token.</li>
+<li><strong><code>sameSite: 'strict'</code></strong>: the browser refuses to attach the cookie to requests arriving from other sites, which neutralizes CSRF-style session riding.</li>
+<li><strong><code>secure</code> in production</strong>: the cookie only travels over HTTPS.</li>
+</ul>
+<p>Every subsequent request carries the cookie; the server resolves it with one query that checks all four conditions at once: token matches, not revoked, not expired, account still active:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">src/server/auth.ts</span><span class="code-frame__lines">lines 135-145</span></figcaption>
+<pre><code class="language-typescript">  const rows = await query&lt;SessionRow&gt;(
+    `SELECT profile.researcher_id, profile.email, profile.role, profile.status, profile.full_name, user_session.expires_at
+     FROM USER_SESSION user_session
+     JOIN RESEARCHER_PROFILE profile ON profile.researcher_id = user_session.researcher_id
+     WHERE user_session.token_hash = :tokenHash
+       AND user_session.revoked_at IS NULL
+       AND user_session.expires_at &gt; SYSTIMESTAMP
+       AND profile.status = 'ACTIVE'`,
+    { tokenHash: tokenHash(token) },
+  )</code></pre>
+</figure>
+<p>Logout is the mirror image: <code>UPDATE USER_SESSION SET revoked_at = SYSTIMESTAMP WHERE token_hash = :tokenHash</code>. Sessions are data, so revocation is a row update: no server restarts, no in-memory registries.</p>
+</section>
+
+<section class="step">
+<h2>Injection: closed by construction</h2>
+<p>SQL injection needs user input concatenated into SQL text. RCP removes the ingredient instead of guarding the recipe:</p>
+<ul>
+<li><strong>Every query uses named binds</strong>: you saw <code>query(sql, binds)</code> in Trace 05; there is no other path to the database in the codebase.</li>
+<li><strong>Ordering comes from an allow-list.</strong> A sort parameter cannot be bound like a value (SQL binds do not substitute column names), so the search module maps the incoming string onto a fixed server-side list of legal <code>ORDER BY</code> fragments. Anything unrecognized falls back to the default.</li>
+<li><strong>The database agrees.</strong> Even the dynamic import logic builds only bind placeholders: never column or table names: from input.</li>
+</ul>
+<div class="callout breakpoint"><p class="callout__tag">Breakpoint</p><p>When you add a query to this codebase, the rule is absolute: values go through <code>:binds</code>, structure goes through allow-lists. A single concatenated query re-opens a door the whole architecture is built to keep shut.</p></div>
+</section>
+
+<section class="step">
+<h2>The remaining walls</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>Defense</th><th>Where</th><th>What it stops</th></tr></thead>
+<tbody>
+<tr><td>Rate limiting</td><td><code>src/server/rate-limit.ts</code>, applied in auth routes</td><td>Password guessing, mass registration: 5 attempts/minute per IP and per email</td></tr>
+<tr><td>Origin checks</td><td><code>rejectCrossOrigin</code> in <code>src/server/http.ts</code></td><td>State-changing requests forged from other sites</td></tr>
+<tr><td>Body-size guard</td><td><code>bodyTooLarge</code> before parsing</td><td>Memory exhaustion via giant payloads</td></tr>
+<tr><td>Least-privilege DB user</td><td><code>database/04_security.sql</code> grants to <code>RCP_APP</code></td><td>The runtime account can run the app but cannot drop tables or delete researcher profiles: DDL belongs to <code>RCP_OWNER</code></td></tr>
+<tr><td>Server-only imports</td><td><code>import 'server-only'</code> at the top of every <code>src/server/*</code> file</td><td>Secrets and SQL accidentally bundled into browser code</td></tr>
+</tbody>
+</table></div>
+<p>Each layer assumes the others can fail. That is the discipline: no single lock, a chain of them.</p>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="plsql.html"><small>◀ Trace 07</small> Views &amp; triggers</a>
+<a class="pager__btn" href="features.html">Next: a feature end to end <small>Trace 09 ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>

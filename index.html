@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How the web works · RCP Trace Guide</title>
+<meta name="description" content="Trace 01 of the RCP Trace Guide: HTTP, clients, servers, and the vocabulary, for programmers who know Java and C++ but not the web.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- THESIS: this guide reads the platform the way you would step through it in a debugger: every page is one trace from browser to Oracle; it refuses the docs-as-reference-pile default. OWN-WORLD: the RCP world: mineral white canvas with a faint dot grid, graphite ink, one scholarly green, translucent bordered panels, Geist type, a dark call-stack sidebar as wayfinding. STORY: a C/C++/Java team steps through 11 traces and ends able to follow any request from click to commit. FIRST VIEWPORT: the four stack frames of the platform light up in order above the thesis, the call stack of 11 traces in the sidebar. FORM: debugger-trace documentation surface, candidate 5 of 7, seed 6e770cc1. FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md -->
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 11 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html" aria-current="page"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace" id="main">
+<p class="trace__crumb">TRACE <b>01</b> / 11 · orientation</p>
+<p class="kicker">Trace 01 · The fundamentals</p>
+<h1>A website is two programs talking.</h1>
+<p class="lede">You already write programs. The web is just a particular shape of program: one side waits, the other side asks. This guide traces the Research Collaboration Platform through eleven layers of that conversation: from the browser on your laptop down to the Oracle tables: using the real code of the real system.</p>
+
+<ul class="hero-trace" aria-label="The four layers of the platform">
+<li><span class="hero-trace__depth">FRAME 0 · BROWSER</span><strong>The client</strong><p>Your laptop. Renders HTML, applies CSS, runs JavaScript, sends HTTP requests.</p></li>
+<li><span class="hero-trace__depth">FRAME 1 · NEXT.JS</span><strong>The server</strong><p>A Node.js program. Maps URLs to functions, renders pages, answers API calls.</p></li>
+<li><span class="hero-trace__depth">FRAME 2 · DRIVER</span><strong>node-oracledb</strong><p>A library of pooled connections that carries SQL to the database and rows back.</p></li>
+<li><span class="hero-trace__depth">FRAME 3 · ORACLE</span><strong>The database</strong><p>Tables, constraints, triggers, views. The only place anything is remembered.</p></li>
+</ul>
+
+<section class="step">
+<h2>A request is a function call over a socket</h2>
+<p>When you open <code>https://rcp-research.vercel.app/researchers</code>, your browser opens a TCP connection and writes a carefully formatted text message. In C terms it is <code>connect()</code> + <code>write()</code>; in Java terms, writing to a <code>Socket</code> output stream. The message looks exactly like this on the wire:</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">the wire · an HTTP request</span><span class="code-frame__lines">verbatim</span></figcaption>
+<pre><code class="language-http">GET /researchers?q=vision HTTP/1.1
+Host: rcp-research.vercel.app
+Accept: text/html
+Accept-Language: en</code></pre>
+</figure>
+<p>The first line carries everything that matters: the <strong>method</strong> (<code>GET</code>: read something), the <strong>path</strong> (<code>/researchers</code>: which resource), and the <strong>query string</strong> (<code>?q=vision</code>: arguments, like passing parameters to a function). The rest are headers: metadata about the request.</p>
+</section>
+
+<section class="step">
+<h2>The response is a return value with a status code</h2>
+<p>The server answers with its own text message. The first line is a status code: think of it as the return value of the call, where <code>0</code> meant success but <code>404</code> meant "no such function":</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">the wire · an HTTP response</span><span class="code-frame__lines">verbatim</span></figcaption>
+<pre><code class="language-http">HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+
+&lt;!DOCTYPE html&gt;
+&lt;html lang="en"&gt; ... the rendered page ... &lt;/html&gt;</code></pre>
+</figure>
+<div class="tablewrap"><table>
+<thead><tr><th>Status</th><th>Meaning</th><th>As a return value</th></tr></thead>
+<tbody>
+<tr><td><code>200</code></td><td>OK</td><td>Success, here is the result</td></tr>
+<tr><td><code>201</code></td><td>Created</td><td>Success, and a new record exists now</td></tr>
+<tr><td><code>400</code></td><td>Bad Request</td><td><code>IllegalArgumentException</code></td></tr>
+<tr><td><code>401</code></td><td>Unauthorized</td><td>You are not logged in</td></tr>
+<tr><td><code>403</code></td><td>Forbidden</td><td>Logged in, but not allowed</td></tr>
+<tr><td><code>404</code></td><td>Not Found</td><td>No such resource</td></tr>
+<tr><td><code>429</code></td><td>Too Many Requests</td><td>Rate limit exceeded</td></tr>
+<tr><td><code>500</code></td><td>Server Error</td><td>Unhandled exception</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Three languages, three jobs</h2>
+<p>The HTML the server returns is not a program: it is a <strong>data structure</strong>, closer to a serialized object than to code. The browser turns it into three things:</p>
+<ul>
+<li><strong>HTML</strong>: structure. The fields of the object: headings, forms, links.</li>
+<li><strong>CSS</strong>: presentation. Rules that say how each part looks, like formatting specifiers applied after the fact.</li>
+<li><strong>JavaScript</strong>: behavior. The only actual program of the three; it runs inside your browser.</li>
+</ul>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>HTML is the <code>struct</code>, CSS is <code>toString()</code> formatting, JavaScript is the methods. A page without JS is a read-only dump; a page with JS is a live object you can interact with.</p></div>
+</section>
+
+<section class="step">
+<h2>The split that organizes everything: client vs server</h2>
+<p>Some code runs in the browser (<em>client-side</em>) and some runs on the machine that owns the domain (<em>server-side</em>). The same JavaScript language runs on both sides: what differs is what each side is allowed to touch. This is the single most important idea in this guide:</p>
+<div class="callout breakpoint"><p class="callout__tag">Breakpoint: the golden rule of RCP</p><p>The browser never connects to Oracle. Every database query runs on the server, inside <code>src/server/</code>. The browser only ever talks to the server over HTTP. Credentials, passwords, and API keys live on the server side of that line and are physically unreachable from client code.</p></div>
+</section>
+
+<section class="step">
+<h2>Your vocabulary, translated</h2>
+<p>RCP is written in <strong>TypeScript</strong>: JavaScript with a static type system. If you know Java, you already know 80% of the syntax: types on variables, functions, classes, <code>import</code>. The runtime is <strong>Node.js</strong>, which runs TypeScript outside a browser. Here is the translation table this guide will keep using:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>You know (Java / C++)</th><th>Here it is (RCP)</th></tr></thead>
+<tbody>
+<tr><td><code>public static void main</code></td><td>A request handler: <code>export async function POST(request)</code></td></tr>
+<tr><td>Servlet / controller</td><td>Next.js API route files under <code>src/app/api/</code></td></tr>
+<tr><td>JDBC connection pool (<code>DataSource</code>)</td><td><code>oracledb.createPool(...)</code> in <code>db-core.ts</code></td></tr>
+<tr><td><code>PreparedStatement</code> with <code>?</code> placeholders</td><td>SQL with named binds: <code>:email</code>, <code>:tokenHash</code></td></tr>
+<tr><td><code>interface</code> / <code>struct</code></td><td>TypeScript <code>interface</code> in <code>src/types/domain.ts</code></td></tr>
+<tr><td><code>#include</code> / <code>import</code></td><td><code>import</code>: same idea, module paths instead of headers</td></tr>
+<tr><td>JUnit assertions</td><td><code>node:test</code> + <code>node:assert/strict</code></td></tr>
+<tr><td><code>setAutoCommit(false)</code>, commit, rollback</td><td><code>withTransaction(...)</code> in <code>db-core.ts</code></td></tr>
+<tr><td>Thread waiting on I/O</td><td><code>await</code>: the runtime parks the function until the result arrives</td></tr>
+</tbody>
+</table></div>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p><code>async/await</code> is the web's answer to blocking I/O without a thread per request. <code>await db.execute(sql)</code> reads like a blocking JDBC call, but underneath the runtime suspends the function and serves other requests meanwhile. Read <code>await</code> as "this line needs the result before continuing": the concurrency is the runtime's problem, not yours.</p></div>
+</section>
+
+<section class="step">
+<h2>How to use this guide</h2>
+<p>Eleven traces, each one a path through the stack. Every code block names its real file and line range in the <a href="https://github.com/MantakaMahir/research-collaboration-platform">RCP repository</a>: open the repo beside this page and read along. The sidebar is your call stack; the numbered steps on each page are the debugger stepping through one concern at a time.</p>
+<ul class="syllabus">
+<li><a href="index.html" aria-current="page"><span class="syllabus__no">TRACE 01</span><strong>How the web works</strong><span>Clients, servers, HTTP, and the vocabulary.</span></a></li>
+<li><a href="architecture.html"><span class="syllabus__no">TRACE 02</span><strong>The architecture</strong><span>Where every file lives and who is allowed to call whom.</span></a></li>
+<li><a href="frontend.html"><span class="syllabus__no">TRACE 03</span><strong>Frontend: React pages</strong><span>How a folder becomes a page and a function becomes HTML.</span></a></li>
+<li><a href="backend.html"><span class="syllabus__no">TRACE 04</span><strong>Backend: API routes</strong><span>Following one registration from form to database.</span></a></li>
+<li><a href="database.html"><span class="syllabus__no">TRACE 05</span><strong>Node ↔ Oracle</strong><span>The connection pool, binds, and transactions.</span></a></li>
+<li><a href="schema.html"><span class="syllabus__no">TRACE 06</span><strong>The schema</strong><span>Twenty tables, and the constraints that enforce the rules.</span></a></li>
+<li><a href="plsql.html"><span class="syllabus__no">TRACE 07</span><strong>Views &amp; triggers</strong><span>What Oracle itself does when your INSERT arrives.</span></a></li>
+<li><a href="security.html"><span class="syllabus__no">TRACE 08</span><strong>Security</strong><span>Password hashing, sessions, and injection defense.</span></a></li>
+<li><a href="features.html"><span class="syllabus__no">TRACE 09</span><strong>A feature end to end</strong><span>Research posts: create, publish, close, notify.</span></a></li>
+<li><a href="testing.html"><span class="syllabus__no">TRACE 10</span><strong>Testing</strong><span>Unit tests, integration tests, and the SQL harness.</span></a></li>
+<li><a href="deployment.html"><span class="syllabus__no">TRACE 11</span><strong>Deployment</strong><span>Local dev, the cloud wallet, and going live.</span></a></li>
+</ul>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<span></span>
+<a class="pager__btn" href="architecture.html">Next: the architecture <small>Trace 02 ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>
