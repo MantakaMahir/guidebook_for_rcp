@@ -219,6 +219,8 @@ a { color: inherit; text-underline-offset: 0.24em; }
   min-width: 0;
 }
 
+.trace--wide { width: min(100%, 78rem); }
+
 .trace__crumb {
   margin: 0 0 2.2rem;
   color: var(--muted-foreground);
@@ -479,6 +481,10 @@ code {
   border-collapse: collapse;
   font-size: 0.9rem;
 }
+
+.trace table.wide-table { min-width: 62rem; }
+
+.trace table.extra-wide-table { min-width: 82rem; }
 
 .trace th, .trace td {
   border-bottom: 1px solid var(--border);

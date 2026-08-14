@@ -12,7 +12,7 @@
 <div class="shell">
 <aside class="stack-nav">
 <a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
-<p class="stack-nav__label">Call stack · 11 frames</p>
+<p class="stack-nav__label">Call stack · 13 frames</p>
 <nav aria-label="Trace steps">
 <a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
 <a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
@@ -25,6 +25,8 @@
 <a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
 <a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
 <a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+<a href="sql-reference.html"><span class="stack-nav__no">A</span>All SQL</a>
+<a href="website-reference.html"><span class="stack-nav__no">B</span>All website code</a>
 </nav>
 <p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
 </aside>
@@ -157,7 +159,7 @@
 <div class="tablewrap"><table>
 <thead><tr><th>Defense</th><th>Where</th><th>What it stops</th></tr></thead>
 <tbody>
-<tr><td>Rate limiting</td><td><code>src/server/rate-limit.ts</code>, applied in auth routes</td><td>Password guessing, mass registration: 5 attempts/minute per IP and per email</td></tr>
+<tr><td>Rate limiting</td><td><code>src/server/rate-limit.ts</code>, applied in auth/import routes</td><td>Registration uses 5 attempts/minute per IP and email; login uses 10 attempts/minute per IP and account email</td></tr>
 <tr><td>Origin checks</td><td><code>rejectCrossOrigin</code> in <code>src/server/http.ts</code></td><td>State-changing requests forged from other sites</td></tr>
 <tr><td>Body-size guard</td><td><code>bodyTooLarge</code> before parsing</td><td>Memory exhaustion via giant payloads</td></tr>
 <tr><td>Least-privilege DB user</td><td><code>database/04_security.sql</code> grants to <code>RCP_APP</code></td><td>The runtime account can run the app but cannot drop tables or delete researcher profiles: DDL belongs to <code>RCP_OWNER</code></td></tr>

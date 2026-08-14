@@ -12,7 +12,7 @@
 <div class="shell">
 <aside class="stack-nav">
 <a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
-<p class="stack-nav__label">Call stack · 11 frames</p>
+<p class="stack-nav__label">Call stack · 13 frames</p>
 <nav aria-label="Trace steps">
 <a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
 <a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
@@ -25,6 +25,8 @@
 <a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
 <a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
 <a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+<a href="sql-reference.html"><span class="stack-nav__no">A</span>All SQL</a>
+<a href="website-reference.html"><span class="stack-nav__no">B</span>All website code</a>
 </nav>
 <p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
 </aside>
@@ -67,7 +69,7 @@ END;
 </section>
 
 <section class="step">
-<h2>AFTER INSERT: one INSERT becomes three rows</h2>
+<h2>AFTER INSERT: a profile row gets its subtype row</h2>
 <p>Immediately after the profile row lands, a second trigger maintains the specialization tables: the enhanced-ER part of the model, where STUDENT and FACULTY are subtypes with their own attributes:</p>
 <figure class="code-frame">
 <figcaption><span class="code-frame__file">database/06_enhanced_er_migration.sql</span><span class="code-frame__lines">lines 153-171</span></figcaption>
@@ -91,7 +93,7 @@ BEGIN
 END;
 /</code></pre>
 </figure>
-<p>So the registration INSERT you traced in Trace 04 actually writes <strong>three</strong> rows: the profile, the session, and the subtype row created here: all inside one transaction. The subtype tables pin their identity with constraints worth reading closely:</p>
+<p>So the registration transaction you traced in Trace 04 writes the profile and session rows from application code, plus the subtype row created here by Oracle: all inside one transaction. The subtype tables pin their identity with constraints worth reading closely:</p>
 <figure class="code-frame">
 <figcaption><span class="code-frame__file">database/06_enhanced_er_migration.sql</span><span class="code-frame__lines">lines 75-85</span></figcaption>
 <pre><code class="language-sql">CREATE TABLE STUDENT_RESEARCHER (
@@ -134,7 +136,10 @@ BEGIN
       RAISE_APPLICATION_ERROR(-20061, 'role change would cross researcher specialization');
     END IF;
   END IF;
-...</code></pre>
+EXCEPTION
+  WHEN NO_DATA_FOUND THEN
+    RAISE_APPLICATION_ERROR(-20059, 'No academic classification mapping exists for role');
+END;</code></pre>
 </figure>
 <p><code>:OLD</code> is the row before the update, <code>:NEW</code> the row after; comparing them is how a trigger detects what actually changed. The second guard says: you may not promote a STUDENT profile into a FACULTY role by UPDATE, because the subtype rows would no longer match. The system forces a deliberate migration instead of a silent one.</p>
 </section>
@@ -165,18 +170,11 @@ WHERE p.status = 'OPEN' AND p.deadline &gt; SYSDATE;</code></pre>
 <h2>Packages: procedures with a namespace</h2>
 <p>For logic with several cooperating procedures, PL/SQL groups them into a package: a spec (the interface) plus a body (the implementation). The contribution reconciler keeps derived publication data consistent:</p>
 <figure class="code-frame">
-<figcaption><span class="code-frame__file">database/06_enhanced_er_migration.sql</span><span class="code-frame__lines">lines 512-518</span></figcaption>
+<figcaption><span class="code-frame__file">database/06_enhanced_er_migration.sql</span><span class="code-frame__lines">lines 512-515</span></figcaption>
 <pre><code class="language-sql">CREATE OR REPLACE PACKAGE RCP_CONTRIBUTION_SYNC AUTHID DEFINER AS
   PROCEDURE reconcile_publication(p_publication_id NUMBER);
 END RCP_CONTRIBUTION_SYNC;
-/
-
-CREATE OR REPLACE PACKAGE BODY RCP_CONTRIBUTION_SYNC AS
-  PROCEDURE reconcile_publication(p_publication_id NUMBER) IS
-  BEGIN
-    DELETE FROM PUBLICATION_CONTRIBUTION pc
-    WHERE pc.publication_id = p_publication_id
-      AND NOT EXISTS ( ... );</code></pre>
+/</code></pre>
 </figure>
 <ul>
 <li>The <strong>spec</strong> is the contract callers see; the <strong>body</strong> can change without breaking them. Splitting interface from implementation, Java-interface style.</li>
@@ -197,7 +195,7 @@ CREATE OR REPLACE PACKAGE BODY RCP_CONTRIBUTION_SYNC AS
 <li>INSERT into <code>USER_SESSION</code> with the hashed token.</li>
 <li>Commit: all rows land together, or none do.</li>
 </ol>
-<p>One HTTP request, one transaction, five database objects cooperating. That is the whole platform in miniature.</p>
+<p>One HTTP request, one transaction, several database objects cooperating. That is the whole platform in miniature.</p>
 </section>
 
 <nav class="pager" aria-label="Trace navigation">

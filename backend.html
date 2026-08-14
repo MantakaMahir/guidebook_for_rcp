@@ -12,7 +12,7 @@
 <div class="shell">
 <aside class="stack-nav">
 <a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
-<p class="stack-nav__label">Call stack · 11 frames</p>
+<p class="stack-nav__label">Call stack · 13 frames</p>
 <nav aria-label="Trace steps">
 <a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
 <a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
@@ -25,6 +25,8 @@
 <a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
 <a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
 <a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+<a href="sql-reference.html"><span class="stack-nav__no">A</span>All SQL</a>
+<a href="website-reference.html"><span class="stack-nav__no">B</span>All website code</a>
 </nav>
 <p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
 </aside>
@@ -32,7 +34,7 @@
 <p class="trace__crumb">TRACE <b>04</b> / 11 · backend</p>
 <p class="kicker">Trace 04 · Backend</p>
 <h1>An API route is one exported function per HTTP method.</h1>
-<p class="lede">Trace the registration request end to end: the form in the browser POSTs JSON to <code>/api/auth/register</code>, a single file receives it, guards it, validates it, writes two rows to Oracle in one transaction, and answers with a cookie and a status code.</p>
+<p class="lede">Trace the registration request end to end: the form in the browser POSTs JSON to <code>/api/auth/register</code>, a single file receives it, guards it, validates it, writes the profile and session rows in one transaction, and lets Oracle triggers maintain the subtype row before answering with a cookie and a status code.</p>
 
 <section class="step">
 <h2>The receiving function</h2>
@@ -68,12 +70,12 @@
 <li><strong>Parse</strong>: <code>await request.json()</code> deserializes the body. Invalid JSON is a 400, never a crash.</li>
 <li><strong>Act</strong>: <code>registerAccount(input)</code> does the real work (next step), then the session cookie is set and <code>201 Created</code> goes back with the new user as JSON.</li>
 </ul>
-<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>This is a servlet's <code>doPost()</code> written as one exported function. <code>return Response.json(...)</code> is <code>response.getWriter().write(...)</code> plus <code>setStatus(...)</code> in one expression. Early <code>return</code> instead of nested <code>if</code> is the same guard-clause style you would use anywhere.</p></div>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>This is a servlet's <code>doPost()</code> written as one exported function. <code>return Response.json(body, options)</code> is <code>response.getWriter().write(body)</code> plus <code>setStatus(status)</code> in one expression. Early <code>return</code> instead of nested <code>if</code> is the same guard-clause style you would use anywhere.</p></div>
 </section>
 
 <section class="step">
 <h2>The real work: validate, hash, insert: one transaction</h2>
-<p>The route file contains no SQL. That lives one layer down in <code>src/server/auth.ts</code>, where <code>registerAccount</code> validates the input, hashes the password, and writes two rows atomically:</p>
+<p>The route file contains no SQL. That lives one layer down in <code>src/server/auth.ts</code>, where <code>registerAccount</code> validates the input, hashes the password, and explicitly writes the profile plus session rows atomically. The profile INSERT also fires the subtype trigger covered in Trace 07:</p>
 <figure class="code-frame">
 <figcaption><span class="code-frame__file">src/server/auth.ts</span><span class="code-frame__lines">lines 66-96</span></figcaption>
 <pre><code class="language-typescript">export async function registerAccount(input: unknown): Promise&lt;{ user: SessionUser; token: string; expiresAt: Date }&gt; {
@@ -135,9 +137,8 @@
 <tbody>
 <tr><td><code>GET</code></td><td>Read</td><td><code>/api/researchers</code>, <code>/api/posts</code>, <code>/api/notifications</code></td></tr>
 <tr><td><code>POST</code></td><td>Create</td><td><code>/api/auth/register</code>, <code>/api/posts</code>, <code>/api/connections</code></td></tr>
-<tr><td><code>PATCH</code></td><td>Partial update</td><td><code>/api/applications/:id/status</code>, <code>/api/admin/users/:id/status</code></td></tr>
-<tr><td><code>PUT</code></td><td>Replace</td><td><code>/api/publications/:id</code></td></tr>
-<tr><td><code>DELETE</code></td><td>Delete</td><td><code>/api/posts/:id</code></td></tr>
+<tr><td><code>PATCH</code></td><td>Partial update / state change</td><td><code>/api/posts/:id</code>, <code>/api/publications/:id</code>, <code>/api/applications/:id/status</code>, <code>/api/admin/users/:id/status</code></td></tr>
+<tr><td><code>DELETE</code></td><td>Deactivate / remove</td><td><code>/api/publications/:id</code> deactivates a publication record</td></tr>
 </tbody>
 </table></div>
 <p>The URL names the resource; the method names the verb. <code>PATCH /api/applications/42/status</code> reads as a sentence: "partially update the status of application 42".</p>

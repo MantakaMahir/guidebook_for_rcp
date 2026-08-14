@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>All website code · RCP Trace Guide</title>
+<meta name="description" content="Appendix B of the RCP Trace Guide: every frontend page, component, API route, user flow, backend helper, security boundary, runtime behavior, and deployment concern.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 13 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+<a href="sql-reference.html"><span class="stack-nav__no">A</span>All SQL</a>
+<a href="website-reference.html" aria-current="page"><span class="stack-nav__no">B</span>All website code</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace trace--wide" id="main">
+<p class="trace__crumb">APPENDIX <b>B</b> / website reference</p>
+<p class="kicker">Appendix B · All website code</p>
+<h1>Every page, component, API route, and flow.</h1>
+<p class="lede">This appendix is the website map. It covers what the visitor sees, which React files render it, which client components call APIs, which API routes receive those requests, which server helpers run the business logic, and which database objects are touched underneath.</p>
+
+<section class="step">
+<h2>Runtime stack and project commands</h2>
+<div class="tablewrap"><table class="wide-table">
+<thead><tr><th>Concern</th><th>Source</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>Framework/runtime</td><td><code>package.json</code> lines 14-20</td><td>Next.js <code>16.2.12</code>, React <code>19.2.4</code>, Oracle driver <code>oracledb 7.0.0</code>, and <code>server-only</code>.</td></tr>
+<tr><td>Dev/build/start</td><td><code>package.json</code> lines 5-12</td><td><code>next dev</code>, <code>next build</code>, <code>next start</code>, importer, typecheck, unit tests, and integration tests.</td></tr>
+<tr><td>Oracle bundling</td><td><code>next.config.ts</code> lines 3-5</td><td><code>oracledb</code> is treated as a server external package so it runs on Node, not in the browser bundle.</td></tr>
+<tr><td>HTTP hardening headers</td><td><code>next.config.ts</code> lines 6-17</td><td>Disables powered-by header and adds nosniff, frame denial, strict-origin referrer policy, and disabled camera/mic/geolocation permissions.</td></tr>
+<tr><td>Route protection precheck</td><td><code>src/proxy.ts</code> lines 3-14</td><td>Requests to <code>/dashboard/*</code> and <code>/admin/*</code> redirect to login if the <code>rcp_session</code> cookie is absent.</td></tr>
+<tr><td>Real auth check</td><td><code>src/server/auth.ts</code> lines 133-157</td><td>Server-side session lookup still validates token hash, expiry, revocation, and active profile status.</td></tr>
+<tr><td>Safe error/body/origin helpers</td><td><code>src/server/http.ts</code> lines 4-34</td><td>100 KB content-length limit, correlation IDs on generic errors, client address extraction, cross-origin mutation blocking.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Frontend page catalogue</h2>
+<div class="tablewrap"><table class="extra-wide-table">
+<thead><tr><th>Route</th><th>Files</th><th>What renders</th><th>Data/API used</th></tr></thead>
+<tbody>
+<tr><td>Global shell</td><td><code>src/app/layout.tsx</code> lines 13-65; <code>src/app/globals.css</code> lines 1-1282; <code>src/components/mobile-nav.tsx</code> lines 1-16; <code>src/components/auth/logout-button.tsx</code> lines 1-26.</td><td>Metadata, site navigation, dashboard links when logged in, mobile menu, logout action, global visual system.</td><td><code>getSession()</code>; logout button calls <code>POST /api/auth/logout</code>.</td></tr>
+<tr><td><code>/</code></td><td><code>src/app/page.tsx</code> lines 6-49.</td><td>Marketing landing page, hero, research/product sections, calls to action.</td><td><code>getSession()</code> to adjust links.</td></tr>
+<tr><td><code>/team</code></td><td><code>src/app/team/page.tsx</code> lines 3-21.</td><td>Team credits.</td><td>Static page content only.</td></tr>
+<tr><td><code>/login</code></td><td><code>src/app/(auth)/login/page.tsx</code> lines 1-6; <code>src/app/(auth)/auth-form.tsx</code> lines 1-70.</td><td>Login form.</td><td>Client component POSTs to <code>/api/auth/login</code> and redirects to <code>callbackUrl</code> or dashboard.</td></tr>
+<tr><td><code>/register</code></td><td><code>src/app/(auth)/register/page.tsx</code> lines 1-6; <code>src/app/(auth)/auth-form.tsx</code> lines 1-70.</td><td>Registration form.</td><td>Client component POSTs to <code>/api/auth/register</code>.</td></tr>
+<tr><td><code>/researchers</code></td><td><code>src/app/(public)/researchers/page.tsx</code> lines 1-52; loading file line 1.</td><td>Public researcher directory with filters/search params.</td><td><code>searchResearchers()</code>, <code>listUniversities()</code>, <code>listResearchAreas()</code>, <code>listSkills()</code>.</td></tr>
+<tr><td><code>/researchers/[id]</code></td><td><code>src/app/(public)/researchers/[id]/page.tsx</code> lines 1-16; <code>profile-actions.tsx</code> lines 1-34.</td><td>Public researcher profile and connect button.</td><td><code>getSession()</code>, <code>getPublicProfile()</code>; connect button POSTs <code>/api/connections</code>.</td></tr>
+<tr><td><code>/publications</code></td><td><code>src/app/(public)/publications/page.tsx</code> lines 1-55; loading file line 1.</td><td>Public publication directory with keyword/author/area/type/year filters.</td><td><code>searchPublications()</code>, <code>listResearchAreas()</code>.</td></tr>
+<tr><td><code>/publications/[id]</code></td><td><code>src/app/(public)/publications/[id]/page.tsx</code> lines 1-14.</td><td>Publication detail page.</td><td><code>getPublication()</code>, <code>getSession()</code>, <code>notFound()</code> if hidden/missing.</td></tr>
+<tr><td><code>/opportunities</code></td><td><code>src/app/(public)/opportunities/page.tsx</code> lines 1-32; loading file line 1.</td><td>Open collaboration opportunities.</td><td><code>searchOpenPosts()</code>, area/skill reference lists.</td></tr>
+<tr><td><code>/opportunities/[id]</code></td><td><code>src/app/(public)/opportunities/[id]/page.tsx</code> lines 1-21; <code>apply-form.tsx</code> lines 1-36.</td><td>Opportunity detail and application form for logged-in users.</td><td><code>getPost()</code>, <code>getSession()</code>; form POSTs <code>/api/posts/[id]/applications</code>.</td></tr>
+<tr><td><code>/dashboard</code></td><td><code>src/app/dashboard/layout.tsx</code> lines 1-12; <code>src/app/dashboard/page.tsx</code> lines 1-7.</td><td>Protected workspace, metrics, recommendation cards.</td><td><code>requireUser()</code>, <code>researcherDashboard()</code>.</td></tr>
+<tr><td><code>/dashboard/profile</code></td><td><code>src/app/dashboard/profile/page.tsx</code> lines 1-12; <code>profile-editor.tsx</code> lines 1-89.</td><td>Profile editor.</td><td><code>getOwnProfile()</code>, references; PATCHes <code>/api/profile/me</code>.</td></tr>
+<tr><td><code>/dashboard/publications</code></td><td><code>src/app/dashboard/publications/page.tsx</code> lines 1-12; <code>publication-editor.tsx</code> lines 1-85.</td><td>Own publications and editor form shared with new/edit pages.</td><td><code>listPublications()</code>; editor calls DOI import endpoints and publication create/update endpoints.</td></tr>
+<tr><td><code>/dashboard/publications/new</code></td><td><code>src/app/dashboard/publications/new/page.tsx</code> lines 1-10.</td><td>New publication form.</td><td><code>requireUser()</code>; client form POSTs <code>/api/publications</code>.</td></tr>
+<tr><td><code>/dashboard/publications/[id]</code></td><td><code>src/app/dashboard/publications/[id]/page.tsx</code> lines 1-15.</td><td>Edit existing publication if owner/admin.</td><td><code>requireUser()</code>, <code>getPublication()</code>; PATCHes <code>/api/publications/[id]</code>.</td></tr>
+<tr><td><code>/dashboard/import</code></td><td><code>src/app/dashboard/import/page.tsx</code> lines 1-4; <code>import-wizard.tsx</code> lines 1-76; <code>import-state.ts</code> lines 1-6.</td><td>OpenAlex author import wizard.</td><td>GET <code>/api/openalex/author</code>, GET/POST <code>/api/import/publications</code>.</td></tr>
+<tr><td><code>/dashboard/posts</code></td><td><code>src/app/dashboard/posts/page.tsx</code> lines 1-7.</td><td>Own collaboration opportunities.</td><td><code>listPosts(user, true)</code>.</td></tr>
+<tr><td><code>/dashboard/posts/new</code></td><td><code>src/app/dashboard/posts/new/page.tsx</code> lines 1-12; <code>post-editor.tsx</code> lines 1-53.</td><td>Create draft opportunity.</td><td>Reference lists; form POSTs <code>/api/posts</code>.</td></tr>
+<tr><td><code>/dashboard/posts/[id]</code></td><td><code>src/app/dashboard/posts/[id]/page.tsx</code> lines 1-17; <code>post-detail-actions.tsx</code> lines 1-26.</td><td>Post detail with publish/close actions.</td><td><code>getPost()</code>; action form PATCHes <code>/api/posts/[id]</code>.</td></tr>
+<tr><td><code>/dashboard/connections</code></td><td><code>src/app/dashboard/connections/page.tsx</code> lines 1-11; <code>connection-actions.tsx</code> lines 1-34.</td><td>Connection inbox/outbox and actions.</td><td><code>listConnections()</code>; client actions call <code>/api/connections</code>.</td></tr>
+<tr><td><code>/dashboard/applications</code></td><td><code>src/app/dashboard/applications/page.tsx</code> lines 1-7; <code>application-actions.tsx</code> lines 1-28.</td><td>Submitted and incoming applications.</td><td><code>listApplications()</code>; actions PATCH <code>/api/applications/[id]/status</code>.</td></tr>
+<tr><td><code>/dashboard/notifications</code></td><td><code>src/app/dashboard/notifications/page.tsx</code> lines 1-7; <code>notification-actions.tsx</code> lines 1-20.</td><td>Notification list and mark-read controls.</td><td><code>listNotifications()</code>; PATCH <code>/api/notifications</code>.</td></tr>
+<tr><td><code>/admin</code></td><td><code>src/app/admin/page.tsx</code> lines 1-7.</td><td>Admin overview metrics.</td><td><code>getSession()</code>, role redirect, <code>adminDashboard()</code>.</td></tr>
+<tr><td>Fallback pages</td><td><code>loading.tsx</code>, <code>error.tsx</code>, <code>not-found.tsx</code>.</td><td>Global loading, error recovery button, and not-found UI.</td><td>Rendered by Next.js as route states.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>API route catalogue</h2>
+<div class="tablewrap"><table class="extra-wide-table">
+<thead><tr><th>API route</th><th>Methods</th><th>Route file</th><th>Backend helper / behavior</th></tr></thead>
+<tbody>
+<tr><td><code>/api/auth/register</code></td><td><code>POST</code></td><td><code>src/app/api/auth/register/route.ts</code> lines 1-34</td><td>Origin guard, IP/email rate limits, body limit, JSON parse, <code>registerAccount()</code>, session cookie, <code>201</code>.</td></tr>
+<tr><td><code>/api/auth/login</code></td><td><code>POST</code></td><td><code>src/app/api/auth/login/route.ts</code> lines 1-41</td><td>Origin guard, IP/account rate limits, body limit, <code>login()</code>, session cookie.</td></tr>
+<tr><td><code>/api/auth/logout</code></td><td><code>POST</code></td><td><code>src/app/api/auth/logout/route.ts</code> lines 1-19</td><td>Origin guard, current cookie lookup, session revoke, cookie clear.</td></tr>
+<tr><td><code>/api/health</code></td><td><code>GET</code></td><td><code>src/app/api/health/route.ts</code> lines 1-15</td><td>Oracle smoke SELECT from <code>DUAL</code>.</td></tr>
+<tr><td><code>/api/universities</code></td><td><code>GET</code></td><td><code>src/app/api/universities/route.ts</code> lines 1-13</td><td><code>listUniversities()</code>.</td></tr>
+<tr><td><code>/api/research-areas</code></td><td><code>GET</code></td><td><code>src/app/api/research-areas/route.ts</code> lines 1-13</td><td><code>listResearchAreas()</code>.</td></tr>
+<tr><td><code>/api/skills</code></td><td><code>GET</code></td><td><code>src/app/api/skills/route.ts</code> lines 1-13</td><td><code>listSkills()</code>.</td></tr>
+<tr><td><code>/api/researchers</code></td><td><code>GET</code></td><td><code>src/app/api/researchers/route.ts</code> line 5</td><td><code>searchResearchers()</code> from query params.</td></tr>
+<tr><td><code>/api/publications/search</code></td><td><code>GET</code></td><td><code>src/app/api/publications/search/route.ts</code> line 5</td><td><code>searchPublications()</code> from query params.</td></tr>
+<tr><td><code>/api/profile/me</code></td><td><code>GET</code>, <code>PATCH</code></td><td><code>src/app/api/profile/me/route.ts</code> lines 1-34</td><td>Own profile read/update. PATCH has origin/body guards and calls <code>updateOwnProfile()</code>.</td></tr>
+<tr><td><code>/api/publications</code></td><td><code>GET</code>, <code>POST</code></td><td><code>src/app/api/publications/route.ts</code> lines 1-35</td><td>List own publications or create publication.</td></tr>
+<tr><td><code>/api/publications/[id]</code></td><td><code>GET</code>, <code>PATCH</code>, <code>DELETE</code></td><td><code>src/app/api/publications/[id]/route.ts</code> lines 1-62</td><td>Get detail, update owned/admin publication, or deactivate publication.</td></tr>
+<tr><td><code>/api/import/doi</code></td><td><code>GET</code>, <code>POST</code></td><td><code>src/app/api/import/doi/route.ts</code> lines 1-38</td><td>Preview DOI via OpenAlex or import DOI as publication.</td></tr>
+<tr><td><code>/api/import/publications</code></td><td><code>GET</code>, <code>POST</code></td><td><code>src/app/api/import/publications/route.ts</code> lines 1-8</td><td>Preview and import selected OpenAlex author works; requires session and rate limits.</td></tr>
+<tr><td><code>/api/openalex/author</code></td><td><code>GET</code></td><td><code>src/app/api/openalex/author/route.ts</code> line 6</td><td>Resolve OpenAlex author ID; requires login.</td></tr>
+<tr><td><code>/api/connections</code></td><td><code>GET</code>, <code>POST</code>, <code>PATCH</code></td><td><code>src/app/api/connections/route.ts</code> lines 1-37</td><td>List, send, accept/reject/cancel/remove connections.</td></tr>
+<tr><td><code>/api/posts</code></td><td><code>GET</code>, <code>POST</code></td><td><code>src/app/api/posts/route.ts</code> lines 1-19</td><td>List public/own posts or create draft post.</td></tr>
+<tr><td><code>/api/posts/[id]</code></td><td><code>GET</code>, <code>PATCH</code></td><td><code>src/app/api/posts/[id]/route.ts</code> lines 1-20</td><td>Get post or update/publish/close post.</td></tr>
+<tr><td><code>/api/posts/[id]/applications</code></td><td><code>GET</code>, <code>POST</code></td><td><code>src/app/api/posts/[id]/applications/route.ts</code> lines 1-15</td><td>List applications for post or submit application.</td></tr>
+<tr><td><code>/api/applications/[id]/status</code></td><td><code>PATCH</code></td><td><code>src/app/api/applications/[id]/status/route.ts</code> lines 1-16</td><td>Review or withdraw application based on submitted status.</td></tr>
+<tr><td><code>/api/notifications</code></td><td><code>GET</code>, <code>PATCH</code></td><td><code>src/app/api/notifications/route.ts</code> lines 1-7</td><td>List notifications, mark one/all as read.</td></tr>
+<tr><td><code>/api/admin/users/[id]/status</code></td><td><code>PATCH</code></td><td><code>src/app/api/admin/users/[id]/status/route.ts</code> line 5</td><td>Admin status moderation with audit log.</td></tr>
+<tr><td><code>/api/admin/posts/[id]/moderation</code></td><td><code>PATCH</code></td><td><code>src/app/api/admin/posts/[id]/moderation/route.ts</code> line 5</td><td>Admin post deactivation with audit log.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>End-to-end user flows</h2>
+<div class="tablewrap"><table class="extra-wide-table">
+<thead><tr><th>Flow</th><th>Browser path</th><th>API/helper path</th><th>Database path</th></tr></thead>
+<tbody>
+<tr><td>Register</td><td><code>/register</code> uses <code>AuthForm</code> to POST JSON.</td><td><code>/api/auth/register</code> → <code>registerAccount()</code> → <code>hashPassword()</code> → <code>setSessionCookie()</code>.</td><td>INSERT <code>RESEARCHER_PROFILE</code>; trigger creates subtype row; INSERT <code>USER_SESSION</code>.</td></tr>
+<tr><td>Login/session</td><td><code>/login</code> POSTs credentials; shell reads session for nav.</td><td><code>/api/auth/login</code> → <code>login()</code>; <code>getSession()</code> uses cookie.</td><td>SELECT active profile by normalized email; verify scrypt hash; INSERT session; future requests SELECT session/profile by token hash.</td></tr>
+<tr><td>Logout</td><td>Logout button in header.</td><td><code>/api/auth/logout</code> → <code>logout()</code> → <code>clearSessionCookie()</code>.</td><td>UPDATE <code>USER_SESSION.revoked_at</code>.</td></tr>
+<tr><td>Researcher discovery</td><td><code>/researchers</code> search/filter form.</td><td>Server page and API use <code>searchResearchers()</code>.</td><td>Calls <code>RCP_DIRECTORY_SEARCH.SEARCH_RESEARCHERS</code>, reading public directory/profile/area/skill/publication/citation data.</td></tr>
+<tr><td>Researcher profile and connection</td><td><code>/researchers/[id]</code>; connect button.</td><td><code>getPublicProfile()</code>; POST <code>/api/connections</code> → <code>sendConnection()</code>.</td><td>SELECT profile/areas/skills; INSERT <code>CONNECTION</code>; INSERT notification for receiver.</td></tr>
+<tr><td>Publication discovery</td><td><code>/publications</code> and <code>/publications/[id]</code>.</td><td><code>searchPublications()</code>, <code>getPublication()</code>.</td><td>Package search reads publication directory; detail SELECTs publication, authors, OpenAlex areas, latest citations.</td></tr>
+<tr><td>Opportunity discovery and application</td><td><code>/opportunities</code>, <code>/opportunities/[id]</code>, apply form.</td><td><code>searchOpenPosts()</code>, <code>getPost()</code>; POST <code>/api/posts/[id]/applications</code> → <code>submitApplication()</code>.</td><td>SELECT/lock post; validate owned publications; INSERT application; INSERT application-publication links; notify post owner.</td></tr>
+<tr><td>Dashboard overview</td><td><code>/dashboard</code>.</td><td><code>researcherDashboard()</code>, <code>recommendedPosts()</code>, <code>similarResearchers()</code>.</td><td>Aggregate count SELECTs plus matching SELECTs over profile areas/skills and post requirements.</td></tr>
+<tr><td>Profile edit</td><td><code>/dashboard/profile</code> form PATCHes own profile.</td><td><code>/api/profile/me</code> → <code>updateOwnProfile()</code>.</td><td>Optional university SELECT/INSERT; validate publication-derived areas; optional skill SELECT/INSERT; UPDATE profile; replace area/skill join rows; triggers mirror contact/expertise data.</td></tr>
+<tr><td>Manual publication create/edit</td><td><code>/dashboard/publications/new</code>, <code>/dashboard/publications/[id]</code>.</td><td><code>/api/publications</code> POST or <code>/api/publications/[id]</code> PATCH/DELETE → publication helpers.</td><td>INSERT/UPDATE <code>PUBLICATION</code>; replace authors/citations; deactivate by status update; contribution triggers react when author/area tables change.</td></tr>
+<tr><td>DOI import</td><td>DOI panel in publication editor.</td><td>GET/POST <code>/api/import/doi</code> → OpenAlex client → <code>previewDoiImport()</code>/<code>importDoi()</code>.</td><td>Duplicate SELECT by DOI; insert publication, authors, OpenAlex areas, citation, external source.</td></tr>
+<tr><td>OpenAlex author import</td><td><code>/dashboard/import</code> wizard.</td><td>Resolve author, preview author works, import selected works.</td><td>Requires profile OpenAlex author ID match; duplicate SELECTs; selected IDs capped at 25; inserts same publication graph as DOI import.</td></tr>
+<tr><td>Post management</td><td><code>/dashboard/posts</code>, new/detail pages.</td><td><code>createPost()</code>, <code>updatePost()</code>, <code>publishPost()</code>, <code>closePost()</code>.</td><td>INSERT draft post; replace requirements; publish only when deadline is future and requirements exist; close updates post and notifies pending/shortlisted applicants.</td></tr>
+<tr><td>Connection workflow</td><td>Profile connect button and dashboard connections page.</td><td><code>sendConnection()</code>, <code>respondToConnection()</code>, <code>cancelConnection()</code>, <code>removeConnection()</code>.</td><td>Connection row inserted or updated; receiver/sender notifications inserted for request/response.</td></tr>
+<tr><td>Application review/withdraw</td><td><code>/dashboard/applications</code>.</td><td>PATCH <code>/api/applications/[id]/status</code> → review/withdraw helpers.</td><td>SELECT/lock application and post owner; UPDATE application status; notify applicant for reviewer decisions.</td></tr>
+<tr><td>Notifications</td><td><code>/dashboard/notifications</code>.</td><td><code>listNotifications()</code>, <code>markNotificationRead()</code>, <code>markAllNotificationsRead()</code>.</td><td>SELECT notification list with actor name; UPDATE read flags.</td></tr>
+<tr><td>Admin overview/moderation</td><td><code>/admin</code> overview; admin APIs for status/moderation.</td><td><code>adminDashboard()</code>, <code>setAccountStatus()</code>, <code>moderatePost()</code>.</td><td>Aggregate SELECTs; locked profile/post updates; audit-log inserts.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Backend helper catalogue</h2>
+<div class="tablewrap"><table class="wide-table">
+<thead><tr><th>File</th><th>Responsibility</th></tr></thead>
+<tbody>
+<tr><td><code>src/server/db-core.ts</code></td><td>Oracle pool initialization, current schema, wallet decoding, query helper, transaction helper.</td></tr>
+<tr><td><code>src/server/auth.ts</code></td><td>Registration validation, login, token hashing, session lookup, logout, cookies.</td></tr>
+<tr><td><code>src/server/passwords.ts</code></td><td>Scrypt password hash and verification.</td></tr>
+<tr><td><code>src/server/http.ts</code></td><td>Safe server errors, content-length guard, client IP extraction, cross-origin rejection.</td></tr>
+<tr><td><code>src/server/rate-limit.ts</code></td><td>In-memory per-key rate-limit helper. Current source has a caveat: first single recent hit deletes the key instead of storing it, so intended accumulation may not happen until a key already has multiple recent timestamps.</td></tr>
+<tr><td><code>src/server/search.ts</code></td><td>Sort/page validation and PL/SQL search package calls.</td></tr>
+<tr><td><code>src/server/profile.ts</code></td><td>Public/own profile reads, references, profile validation/update.</td></tr>
+<tr><td><code>src/server/publications.ts</code></td><td>Publication validation, create/update/deactivate/list/detail.</td></tr>
+<tr><td><code>src/server/imports.ts</code></td><td>OpenAlex DOI and author-work import classification and inserts.</td></tr>
+<tr><td><code>src/server/integrations/openalex.ts</code></td><td>External OpenAlex fetch/normalization.</td></tr>
+<tr><td><code>src/server/posts.ts</code></td><td>Opportunity create/update/publish/close/list/detail.</td></tr>
+<tr><td><code>src/server/applications.ts</code></td><td>Submit/review/withdraw/list applications.</td></tr>
+<tr><td><code>src/server/connections.ts</code></td><td>Send/respond/cancel/remove/list connections.</td></tr>
+<tr><td><code>src/server/notifications.ts</code></td><td>Create/list/read notifications.</td></tr>
+<tr><td><code>src/server/matching.ts</code></td><td>Recommended opportunities and similar researchers.</td></tr>
+<tr><td><code>src/server/dashboard.ts</code></td><td>Researcher and admin metrics.</td></tr>
+<tr><td><code>src/server/admin.ts</code></td><td>Account status changes, post moderation, audit rows.</td></tr>
+<tr><td><code>src/server/validation.ts</code></td><td>Email, DOI, and whitespace normalization helpers.</td></tr>
+<tr><td><code>src/types/domain.ts</code></td><td>Shared TypeScript domain types for users, profiles, publications, posts, applications, notifications.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Frontend behavior patterns</h2>
+<div class="tablewrap"><table class="wide-table">
+<thead><tr><th>Pattern</th><th>Files</th><th>How it works</th></tr></thead>
+<tbody>
+<tr><td>Server components for reads</td><td>Most <code>page.tsx</code> files.</td><td>Pages call server helpers directly, await database results, and return JSX. No client fetch is needed for initial page data.</td></tr>
+<tr><td>Client components for mutations</td><td><code>auth-form.tsx</code>, editors, action buttons, import wizard.</td><td>Files with <code>'use client'</code> handle form state, call <code>fetch()</code>, and use <code>router.refresh()</code> or redirects after success.</td></tr>
+<tr><td>URL search params for public filtering</td><td>Public researchers/publications/opportunities pages.</td><td>Forms submit as normal GET navigation, the server page reads <code>searchParams</code>, then calls search helpers.</td></tr>
+<tr><td><code>notFound()</code> for hidden/missing records</td><td>Dynamic public and dashboard detail pages.</td><td>Invalid IDs, missing records, private profiles, inactive publications, or unauthorized edit attempts render the not-found page.</td></tr>
+<tr><td>Protected layouts</td><td><code>dashboard/layout.tsx</code>, <code>admin/page.tsx</code>.</td><td>Dashboard requires any valid session; admin additionally checks <code>user.role === 'ADMIN'</code>.</td></tr>
+<tr><td>Shared visual system</td><td><code>globals.css</code>.</td><td>The app avoids component-library abstractions; styles target semantic classes and <code>data-slot</code> attributes.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Security and runtime behavior that affects the website</h2>
+<div class="tablewrap"><table class="wide-table">
+<thead><tr><th>Boundary</th><th>Source</th><th>Behavior</th></tr></thead>
+<tbody>
+<tr><td>Cookie</td><td><code>src/server/auth.ts</code> lines 11-12, 177-187</td><td><code>rcp_session</code>, seven-day expiry, random token stored only in browser cookie, SHA-256 token hash stored in DB, <code>HttpOnly</code>, <code>SameSite=Strict</code>, secure in production.</td></tr>
+<tr><td>Password</td><td><code>src/server/passwords.ts</code> lines 1-29</td><td>Scrypt hash format; login verifies without storing plaintext password.</td></tr>
+<tr><td>CSRF-style origin check</td><td><code>src/server/http.ts</code> lines 25-34</td><td>Mutating API routes reject requests whose <code>Origin</code> header does not match the request URL origin.</td></tr>
+<tr><td>Payload limit</td><td><code>src/server/http.ts</code> lines 4 and 14-17</td><td>Rejects requests with content-length above 100,000 bytes.</td></tr>
+<tr><td>Rate limits</td><td>Auth/import route files and <code>src/server/rate-limit.ts</code>.</td><td>Registration uses 5/minute per IP and email; login uses 10/minute per IP/account; import previews/posts have per-user limits. Current helper caveat noted above.</td></tr>
+<tr><td>SQL injection defense</td><td>All <code>src/server/*.ts</code> SQL helpers.</td><td>Runtime values use Oracle binds; sort identifiers are allow-listed before package calls.</td></tr>
+<tr><td>Private profiles</td><td><code>src/server/profile.ts</code> lines 274-280</td><td>Private or inactive profiles are hidden except to owner/admin; private contact data is hidden except to owner/admin.</td></tr>
+<tr><td>Publication visibility</td><td><code>src/server/publications.ts</code> lines 222-229</td><td>Inactive publications are hidden except to admin or steward.</td></tr>
+<tr><td>Database privileges</td><td><code>database/04_security.sql</code> lines 39-72</td><td><code>RCP_APP</code> gets only selected table/view/package/sequence operations.</td></tr>
+<tr><td>Cloud wallet</td><td><code>src/server/db-core.ts</code> lines 27-88</td><td>Can use local wallet directory or base64 wallet content for deployment.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Environment variables</h2>
+<div class="tablewrap"><table class="wide-table">
+<thead><tr><th>Name</th><th>Listed in <code>.env.example</code></th><th>Runtime status</th></tr></thead>
+<tbody>
+<tr><td><code>ORACLE_USER</code></td><td>line 2</td><td>Used by <code>db-core.ts</code> to connect.</td></tr>
+<tr><td><code>ORACLE_PASSWORD</code></td><td>line 4</td><td>Used by <code>db-core.ts</code> to connect.</td></tr>
+<tr><td><code>ORACLE_CONNECT_STRING</code></td><td>line 5</td><td>Used by <code>db-core.ts</code> to connect.</td></tr>
+<tr><td><code>ORACLE_SCHEMA</code></td><td>line 6</td><td>Used to set current schema after connections are acquired.</td></tr>
+<tr><td><code>TNS_ADMIN</code></td><td>line 8</td><td>Wallet directory option for Oracle client configuration.</td></tr>
+<tr><td><code>ORACLE_CLIENT_LIB_DIR</code></td><td>line 10</td><td>Oracle Instant Client thick-mode path when needed.</td></tr>
+<tr><td><code>WALLET_BASE64</code></td><td>line 12</td><td>Alternative deploy-time wallet content decoded by <code>db-core.ts</code>.</td></tr>
+<tr><td><code>ORACLE_WALLET_PASSWORD</code></td><td>line 14</td><td>Wallet password for Autonomous Database wallet use.</td></tr>
+<tr><td><code>SESSION_SECRET</code></td><td>line 15</td><td>Listed but not read by current runtime auth source; sessions use random tokens plus database hashes.</td></tr>
+<tr><td><code>OPENALEX_API_KEY</code></td><td>line 16</td><td>Optional external API key depending on OpenAlex client behavior.</td></tr>
+<tr><td><code>ORCID_CLIENT_ID</code>, <code>ORCID_CLIENT_SECRET</code></td><td>lines 17-18</td><td>Listed for future/related ORCID integration; not part of current visible auth flow.</td></tr>
+<tr><td><code>NEXT_PUBLIC_APP_URL</code></td><td>line 19</td><td>Public app URL configuration placeholder.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Testing coverage by layer</h2>
+<div class="tablewrap"><table class="wide-table">
+<thead><tr><th>Layer</th><th>Files/commands</th><th>What breaks if it fails</th></tr></thead>
+<tbody>
+<tr><td>TypeScript</td><td><code>npm run typecheck</code></td><td>Invalid imports, types, JSX props, route/helper type errors.</td></tr>
+<tr><td>Unit</td><td><code>npm test</code>; <code>tests/unit/**/*.test.ts</code></td><td>Pure logic such as password hashing/verification, validation, discovery/import classification.</td></tr>
+<tr><td>Integration</td><td><code>npm run test:integration</code>; <code>tests/integration/**/*.test.ts</code></td><td>Real Oracle-backed auth, profile, publication, collaboration, and health flows.</td></tr>
+<tr><td>Database</td><td><code>tests/database/run-database-tests.ps1</code> → <code>database/05_database_tests.sql</code></td><td>Missing objects, broken grants, invalid package compilation, broken enhanced-ER invariants, bad workflow constraints, seed minimums.</td></tr>
+<tr><td>Build</td><td><code>npm run build</code></td><td>Next.js compile/rendering failures before deployment.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Deployment path</h2>
+<ul class="stack-flow" aria-label="Deployment flow">
+<li><span class="stack-flow__layer">SOURCE</span><span class="stack-flow__name">GitHub repository</span><p class="stack-flow__detail">Main branch contains Next.js app source, database scripts, tests, and assets.</p></li>
+<li><span class="stack-flow__layer">BUILD</span><span class="stack-flow__name">Vercel</span><p class="stack-flow__detail">Runs the Next build and hosts Node server functions for API routes and server-rendered pages.</p></li>
+<li><span class="stack-flow__layer">RUNTIME</span><span class="stack-flow__name">Oracle Cloud</span><p class="stack-flow__detail">The app connects as <code>RCP_APP</code> through environment variables and wallet configuration.</p></li>
+<li><span class="stack-flow__layer">EXTERNAL</span><span class="stack-flow__name">OpenAlex</span><p class="stack-flow__detail">Server-only publication metadata source for DOI and author imports.</p></li>
+</ul>
+<p>Code deployment and schema deployment are separate. Pushing the Next app updates Vercel; changing tables, triggers, packages, or grants requires running the SQL scripts deliberately against Oracle.</p>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="sql-reference.html"><small>◀ Appendix A</small> All SQL</a>
+<a class="pager__btn" href="index.html">Restart <small>Trace 01 ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>

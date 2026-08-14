@@ -12,7 +12,7 @@
 <div class="shell">
 <aside class="stack-nav">
 <a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
-<p class="stack-nav__label">Call stack · 11 frames</p>
+<p class="stack-nav__label">Call stack · 13 frames</p>
 <nav aria-label="Trace steps">
 <a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
 <a href="architecture.html" aria-current="page"><span class="stack-nav__no">02</span>The architecture</a>
@@ -25,6 +25,8 @@
 <a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
 <a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
 <a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+<a href="sql-reference.html"><span class="stack-nav__no">A</span>All SQL</a>
+<a href="website-reference.html"><span class="stack-nav__no">B</span>All website code</a>
 </nav>
 <p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
 </aside>
@@ -53,16 +55,19 @@
 │  │  ├─ (public)/         #   public directories   →  /researchers, /publications, /opportunities
 │  │  ├─ (auth)/           #   login &amp; register     →  /login, /register
 │  │  ├─ dashboard/        #   signed-in workspace  →  /dashboard/...
-│  │  └─ api/              #   JSON endpoints       →  /api/auth/login, /api/posts ...
+│  │  └─ api/              #   JSON endpoints       →  /api/auth/login, /api/posts
 │  ├─ server/              # business logic + SQL (never imported by the browser)
 │  │  ├─ db-core.ts        #   the Oracle connection pool
 │  │  ├─ auth.ts           #   sessions, registration, login
 │  │  ├─ posts.ts          #   collaboration posts
-│  │  └─ ...
+│  │  ├─ publications.ts   #   publication stewardship
+│  │  ├─ profile.ts        #   profile reads and edits
+│  │  └─ search.ts         #   PL/SQL search package calls
 │  └─ types/domain.ts      # shared TypeScript interfaces
 ├─ database/               # Oracle scripts, run in numeric order
-│  ├─ 01_schema.sql        #   CREATE TABLE ... (20 tables)
+│  ├─ 01_schema.sql        #   20 base CREATE TABLE statements
 │  ├─ 02_seed_data.sql     #   INSERT demo rows
+│  ├─ 06_enhanced_er_migration.sql
 │  ├─ 03_views_and_plsql.sql
 │  ├─ 04_security.sql      #   grants to the RCP_APP runtime user
 │  └─ 05_database_tests.sql

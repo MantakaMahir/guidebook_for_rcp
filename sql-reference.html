@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>All SQL · RCP Trace Guide</title>
+<meta name="description" content="Appendix A of the RCP Trace Guide: every SQL script, DDL, DML, PL/SQL object, grant, test, runtime query source, and setup SQL location.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="stack-nav">
+<a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
+<p class="stack-nav__label">Call stack · 13 frames</p>
+<nav aria-label="Trace steps">
+<a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
+<a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
+<a href="frontend.html"><span class="stack-nav__no">03</span>Frontend: React pages</a>
+<a href="backend.html"><span class="stack-nav__no">04</span>Backend: API routes</a>
+<a href="database.html"><span class="stack-nav__no">05</span>Node ↔ Oracle</a>
+<a href="schema.html"><span class="stack-nav__no">06</span>The schema</a>
+<a href="plsql.html"><span class="stack-nav__no">07</span>Views &amp; triggers</a>
+<a href="security.html"><span class="stack-nav__no">08</span>Security</a>
+<a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
+<a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
+<a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+<a href="sql-reference.html" aria-current="page"><span class="stack-nav__no">A</span>All SQL</a>
+<a href="website-reference.html"><span class="stack-nav__no">B</span>All website code</a>
+</nav>
+<p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
+</aside>
+<main class="trace trace--wide" id="main">
+<p class="trace__crumb">APPENDIX <b>A</b> / SQL reference</p>
+<p class="kicker">Appendix A · All SQL</p>
+<h1>Every SQL entry point in the project.</h1>
+<p class="lede">This appendix is the map for every SQL statement in RCP: schema DDL, seed DML, views, packages, triggers, grants, test SQL, setup SQL, cleanup SQL, and SQL embedded in the TypeScript backend. The canonical full text stays in the source repo; this page tells you exactly where each statement group lives, what category it belongs to, and what objects it touches.</p>
+
+<section class="step">
+<h2>SQL execution order</h2>
+<p>The local database harness rebuilds the schema in this exact order. Anything that depends on a previous object must come later: views after tables, grants after packages/views, tests after everything.</p>
+<figure class="code-frame">
+<figcaption><span class="code-frame__file">tests/database/run-database-tests.ps1</span><span class="code-frame__lines">lines 27-40</span></figcaption>
+<pre><code class="language-powershell">$login = "$env:ORACLE_USER/$env:ORACLE_PASSWORD@$env:ORACLE_CONNECT_STRING"
+$scripts = if ($SchemaOnly) {
+  '00_reset.sql', '01_schema.sql', '02_seed_data.sql', '06_enhanced_er_migration.sql', '03_views_and_plsql.sql', '04_security.sql', '05_database_tests.sql'
+} else {
+  '00_reset.sql', '01_schema.sql', '02_seed_data.sql', '06_enhanced_er_migration.sql', '03_views_and_plsql.sql', '04_security.sql', '05_database_tests.sql'
+}
+
+foreach ($script in $scripts) {
+  $path = "database/$script"
+  &amp; $sqlplus -L -S $login "@$path"
+}</code></pre>
+</figure>
+<div class="callout breakpoint"><p class="callout__tag">Destructive boundary</p><p><code>00_reset.sql</code> drops packages, views, triggers, tables, constraints, columns, indexes, and the sequence. It is for rebuilds, not production migrations with live data.</p></div>
+</section>
+
+<section class="step">
+<h2>Database scripts: complete catalogue</h2>
+<div class="tablewrap"><table class="extra-wide-table">
+<thead><tr><th>File</th><th>Role</th><th>DDL</th><th>DML / DQL</th><th>PL/SQL</th><th>DCL / grants</th><th>Tests</th></tr></thead>
+<tbody>
+<tr><td><code>database/00_reset.sql</code></td><td>Schema teardown for local rebuilds.</td><td>Dynamic <code>DROP PACKAGE</code>, <code>DROP VIEW</code>, <code>DROP TRIGGER</code>, <code>DROP INDEX</code>, <code>ALTER TABLE DROP CONSTRAINT</code>, <code>ALTER TABLE DROP COLUMN</code>, <code>DROP TABLE ... CASCADE CONSTRAINTS PURGE</code>, <code>DROP SEQUENCE</code>: lines 26-84.</td><td>None.</td><td>Anonymous block and helper procedures <code>drop_if_exists</code>, <code>drop_if_exists_any</code>: lines 4-85.</td><td>None.</td><td>None.</td></tr>
+<tr><td><code>database/01_schema.sql</code></td><td>Base relational schema.</td><td><code>CREATE SEQUENCE</code>: line 4. Twenty <code>CREATE TABLE</code> statements: lines 6-330. Nine explicit unique indexes: lines 332-362.</td><td>None.</td><td>None.</td><td>None.</td><td>None.</td></tr>
+<tr><td><code>database/02_seed_data.sql</code></td><td>Deterministic demo data.</td><td>None.</td><td>Inserts universities, areas, skills, demo accounts, profile areas/skills, publications, authors, areas, citations, external sources, posts, post requirements, connections, applications, application-publication links, notification, audit rows, then commits: lines 14-252. Uses <code>SELECT ... INTO</code> to pick generated IDs throughout.</td><td>Anonymous block with variables and loops: lines 4-254.</td><td>None.</td><td>None.</td></tr>
+<tr><td><code>database/06_enhanced_er_migration.sql</code></td><td>Additive enhanced-ER migration after seeding.</td><td>Nine added tables, one added profile column, subtype constraints, unique indexes, triggers, packages: lines 18-814.</td><td>Classification map inserts, profile academic-type backfill, subtype backfills, contact backfill, expertise backfill, contribution backfill, annual citation backfill, trigger/package DML, final commit: lines 32-816.</td><td>Triggers for academic type, subtype guard, contact sync, skill/expertise sync, contribution sync, citation sync; packages <code>RCP_CONTRIBUTION_SYNC</code> and <code>RCP_ER_WORKFLOW</code>: lines 109-814.</td><td>None.</td><td>None.</td></tr>
+<tr><td><code>database/03_views_and_plsql.sql</code></td><td>Read projections and DB search API.</td><td>Nine <code>CREATE OR REPLACE VIEW</code> blocks: lines 6-149. Package spec/body for <code>RCP_DIRECTORY_SEARCH</code>: lines 151-529.</td><td>Read-only SELECT logic inside views and ref cursors.</td><td>Search procedures <code>SEARCH_RESEARCHERS</code>, <code>SEARCH_PUBLICATIONS</code>, <code>SEARCH_OPEN_POSTS</code>: lines 151-528.</td><td>None.</td><td>None.</td></tr>
+<tr><td><code>database/04_security.sql</code></td><td>Runtime least privilege for <code>RCP_APP</code>.</td><td>None.</td><td>None.</td><td>None.</td><td>Revokes all tracked objects from <code>RCP_APP</code>: lines 4-37. Grants selected table/view/package/sequence privileges: lines 39-72.</td><td>None.</td></tr>
+<tr><td><code>database/04a_create_app_user.sql</code></td><td>Parameterized runtime-user creation.</td><td><code>CREATE USER RCP_APP IDENTIFIED BY "&amp;1"</code>: line 6.</td><td>None.</td><td>None.</td><td><code>GRANT CREATE SESSION TO RCP_APP</code>: line 8.</td><td>None.</td></tr>
+<tr><td><code>database/05_database_tests.sql</code></td><td>Database invariant test suite.</td><td><code>ALTER SESSION SET CURRENT_SCHEMA = RCP_OWNER</code>: line 5. Constraint-mode switches through <code>EXECUTE IMMEDIATE 'SET CONSTRAINTS ...'</code>: lines 380 and 384.</td><td>Dictionary checks, invariant SELECTs, savepoint-scoped INSERT/UPDATE tests, rollback to savepoint: lines 7-489.</td><td>Anonymous test blocks and calls to <code>RCP_DIRECTORY_SEARCH</code> and <code>RCP_ER_WORKFLOW</code>: lines 7-489.</td><td>Verifies selected grants in <code>user_tab_privs</code>; does not grant: lines 81-127.</td><td>All blocks are tests: object inventory, grants, compilation, search smoke calls, invalid sort/page rejection, enhanced-ER invariants, negative workflow tests, seed minimums.</td></tr>
+<tr><td><code>database/demos/syllabus_only_demos.sql</code></td><td>Isolated DBMS syllabus demo.</td><td>None.</td><td><code>SAVEPOINT</code>, <code>ROLLBACK TO</code>, <code>DBMS_OUTPUT</code>: lines 6-10.</td><td>Anonymous demo block: lines 6-11.</td><td>None.</td><td>Not a production test; only demonstrates transaction control.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Base DDL: all objects from <code>01_schema.sql</code></h2>
+<div class="tablewrap"><table class="extra-wide-table">
+<thead><tr><th>Object</th><th>Lines</th><th>Type</th><th>Purpose and enforced rules</th></tr></thead>
+<tbody>
+<tr><td><code>RCP_ID_SEQ</code></td><td>4</td><td>Sequence</td><td>Shared numeric ID generator for most inserted rows.</td></tr>
+<tr><td><code>UNIVERSITY</code></td><td>6-15</td><td>Table</td><td>University reference data. Status constrained to <code>ACTIVE</code>/<code>INACTIVE</code>.</td></tr>
+<tr><td><code>RESEARCHER_PROFILE</code></td><td>17-47</td><td>Table</td><td>Accounts and public profile data. Foreign key to university, role/status/profile visibility/contact visibility checks, ORCID regex check.</td></tr>
+<tr><td><code>USER_SESSION</code></td><td>49-59</td><td>Table</td><td>Server-side login sessions. Foreign key to profile and unique <code>token_hash</code>.</td></tr>
+<tr><td><code>RESEARCH_AREA</code></td><td>61-69</td><td>Table</td><td>Research-area reference data with active/inactive status.</td></tr>
+<tr><td><code>RESEARCHER_AREA</code></td><td>71-85</td><td>Table</td><td>Many-to-many researcher-area relation with expertise level, years, primary flag, and level/year/check constraints.</td></tr>
+<tr><td><code>SKILL</code></td><td>87-95</td><td>Table</td><td>Skill reference data with active/inactive status.</td></tr>
+<tr><td><code>RESEARCHER_SKILL</code></td><td>97-109</td><td>Table</td><td>Many-to-many researcher-skill relation with proficiency and years checks.</td></tr>
+<tr><td><code>PUBLICATION</code></td><td>111-133</td><td>Table</td><td>Publication records owned by a researcher. Year/type/status checks.</td></tr>
+<tr><td><code>PUBLICATION_AUTHOR</code></td><td>135-153</td><td>Table</td><td>Ordered author list. Composite PK by publication/order, optional internal researcher FK, ORCID and corresponding-author checks.</td></tr>
+<tr><td><code>PUBLICATION_AREA</code></td><td>155-167</td><td>Table</td><td>Publication-topic relation. Source constrained to <code>MANUAL</code>/<code>OPENALEX</code>/<code>CROSSREF</code>; relevance score 0-1.</td></tr>
+<tr><td><code>CITATION_RECORD</code></td><td>169-180</td><td>Table</td><td>Citation snapshots by source and time. Source and nonnegative count checks.</td></tr>
+<tr><td><code>EXTERNAL_PUBLICATION_SOURCE</code></td><td>182-195</td><td>Table</td><td>External IDs such as OpenAlex. Unique by source/external ID.</td></tr>
+<tr><td><code>CONNECTION</code></td><td>197-212</td><td>Table</td><td>Researcher-to-researcher professional connection workflow. Prevents self-connections and constrains status.</td></tr>
+<tr><td><code>RESEARCH_POST</code></td><td>214-232</td><td>Table</td><td>Collaboration opportunities. Owner FK, role-type enum, lifecycle status enum.</td></tr>
+<tr><td><code>POST_REQUIRED_AREA</code></td><td>234-244</td><td>Table</td><td>Post required research areas with weight 0-100.</td></tr>
+<tr><td><code>POST_REQUIRED_SKILL</code></td><td>246-258</td><td>Table</td><td>Post required skills with minimum level and weight checks.</td></tr>
+<tr><td><code>RESEARCH_APPLICATION</code></td><td>260-275</td><td>Table</td><td>Applications to posts. Unique one application per post/applicant and status enum.</td></tr>
+<tr><td><code>APPLICATION_PUBLICATION</code></td><td>277-288</td><td>Table</td><td>Publications attached to an application, with display order uniqueness.</td></tr>
+<tr><td><code>NOTIFICATION</code></td><td>290-318</td><td>Table</td><td>Recipient/actor/post/application/connection notification records, notification type enum, read flag check.</td></tr>
+<tr><td><code>AUDIT_LOG</code></td><td>320-330</td><td>Table</td><td>Admin moderation audit trail.</td></tr>
+<tr><td><code>UX_UNIV_NAME_NORM</code></td><td>332-333</td><td>Unique index</td><td>Case/space-normalized uniqueness for university name + country.</td></tr>
+<tr><td><code>UX_RP_EMAIL_NORM</code></td><td>335-336</td><td>Unique index</td><td>Case/space-normalized unique email.</td></tr>
+<tr><td><code>UX_RP_ORCID_NORM</code></td><td>338-339</td><td>Unique index</td><td>Unique non-null ORCID.</td></tr>
+<tr><td><code>UX_RP_OPENALEX_NORM</code></td><td>341-342</td><td>Unique index</td><td>Unique non-null OpenAlex author ID.</td></tr>
+<tr><td><code>UX_AREA_NAME_NORM</code></td><td>344-345</td><td>Unique index</td><td>Unique normalized research-area name.</td></tr>
+<tr><td><code>UX_SKILL_NAME_NORM</code></td><td>347-348</td><td>Unique index</td><td>Unique normalized skill name.</td></tr>
+<tr><td><code>UX_RA_PRIMARY</code></td><td>350-351</td><td>Unique index</td><td>At most one primary area per researcher.</td></tr>
+<tr><td><code>UX_PUB_DOI_NORM</code></td><td>353-354</td><td>Unique index</td><td>Unique normalized non-null DOI.</td></tr>
+<tr><td><code>UX_CONN_ACTIVE_PAIR</code></td><td>356-362</td><td>Unique index</td><td>At most one pending/accepted connection per unordered researcher pair.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Seed DML: every inserted demo object</h2>
+<div class="tablewrap"><table class="wide-table">
+<thead><tr><th>Lines</th><th>DML</th><th>Rows / purpose</th></tr></thead>
+<tbody>
+<tr><td>14-22</td><td><code>INSERT INTO university</code></td><td>Five deterministic demo universities.</td></tr>
+<tr><td>24-32</td><td><code>INSERT INTO research_area</code>, <code>INSERT INTO skill</code></td><td>Twelve research areas and fifteen skills.</td></tr>
+<tr><td>34-41</td><td><code>INSERT INTO researcher_profile</code></td><td>One admin account with deterministic demo password hash.</td></tr>
+<tr><td>43-93</td><td><code>SELECT ... INTO</code>, <code>INSERT INTO researcher_profile</code>, <code>INSERT INTO researcher_area</code>, <code>INSERT INTO researcher_skill</code></td><td>Twenty demo researchers, each attached to one university, one primary area, and one skill.</td></tr>
+<tr><td>95-137</td><td><code>INSERT INTO publication</code>, <code>publication_author</code>, <code>publication_area</code>, <code>citation_record</code>, <code>external_publication_source</code></td><td>Forty demo publications with one internal author, one area, one citation snapshot, and one OpenAlex source row.</td></tr>
+<tr><td>139-175</td><td><code>INSERT INTO research_post</code>, <code>post_required_area</code>, <code>post_required_skill</code></td><td>Ten collaboration posts, first eight open and remaining draft, each with one area and one skill requirement.</td></tr>
+<tr><td>177-191</td><td><code>INSERT INTO connection</code></td><td>Five accepted professional connections.</td></tr>
+<tr><td>193-220</td><td><code>INSERT INTO research_application</code>, <code>application_publication</code></td><td>Five applications to open posts, with one attached publication each.</td></tr>
+<tr><td>222-250</td><td><code>INSERT INTO notification</code>, <code>audit_log</code></td><td>One shortlisted notification and two deterministic audit rows.</td></tr>
+<tr><td>252</td><td><code>COMMIT</code></td><td>Makes the deterministic seed transaction permanent.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Enhanced DDL/DML/PLSQL from <code>06_enhanced_er_migration.sql</code></h2>
+<div class="tablewrap"><table class="extra-wide-table">
+<thead><tr><th>Lines</th><th>Object / statement</th><th>Category</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td>18-30</td><td><code>ACADEMIC_CLASSIFICATION_MAP</code></td><td>DDL</td><td>Maps legacy roles to persisted academic subtype classification.</td></tr>
+<tr><td>32-58</td><td>Four <code>INSERT</code> statements</td><td>DML</td><td>Maps <code>STUDENT</code> to <code>STUDENT</code>; <code>RESEARCHER</code>, <code>PROFESSOR</code>, and <code>ADMIN</code> to <code>FACULTY</code>.</td></tr>
+<tr><td>60-73</td><td><code>ALTER TABLE RESEARCHER_PROFILE</code></td><td>DDL + DML</td><td>Adds/backfills/requires <code>academic_type</code>, adds check and unique parent key for subtype tables.</td></tr>
+<tr><td>75-97</td><td><code>STUDENT_RESEARCHER</code>, <code>FACULTY_RESEARCHER</code></td><td>DDL</td><td>Total/disjoint subtype tables using composite FK to parent profile/classification.</td></tr>
+<tr><td>99-107</td><td>Subtype backfill inserts</td><td>DML</td><td>Creates student/faculty subtype rows for existing profiles.</td></tr>
+<tr><td>109-171</td><td><code>TRG_PROFILE_ACADEMIC_TYPE_BI</code>, <code>TRG_PROFILE_ACADEMIC_TYPE_GUARD</code>, <code>TRG_PROFILE_SUBTYPE_DEFAULT</code></td><td>PL/SQL triggers</td><td>Derives academic type before insert, blocks illegal type changes, and creates the mandatory subtype row after profile insert.</td></tr>
+<tr><td>173-227</td><td><code>TRG_STUDENT_RESEARCHER_GUARD</code>, <code>TRG_FACULTY_RESEARCHER_GUARD</code></td><td>PL/SQL triggers</td><td>Blocks subtype identity updates/deletes and prevents a researcher from being both student and faculty.</td></tr>
+<tr><td>234-257</td><td><code>RESEARCHER_CONTACT</code>, <code>UX_RESEARCHER_CONTACT_PRIMARY</code></td><td>DDL</td><td>Multivalued contacts with exactly one legacy-primary phone row per researcher.</td></tr>
+<tr><td>259-272</td><td>Contact backfill/update</td><td>DML</td><td>Copies scalar <code>contact_phone</code> values into contact rows and marks the matching phone as legacy primary.</td></tr>
+<tr><td>274-318</td><td><code>TRG_PROFILE_PHONE_CONTACT</code></td><td>PL/SQL trigger</td><td>Keeps legacy scalar phone/contact visibility synchronized with the contact relation.</td></tr>
+<tr><td>328-330</td><td><code>BEGIN NULL; END;</code></td><td>PL/SQL</td><td>No-op section marker documenting that independent contacts are deliberately not synchronized.</td></tr>
+<tr><td>334-363</td><td><code>EXPERTISE_AREA</code>, <code>RESEARCHER_EXPERTISE</code>, <code>UX_EXPERTISE_AREA_NAME_NORM</code></td><td>DDL</td><td>Canonical expertise tables mirroring legacy skills.</td></tr>
+<tr><td>365-376</td><td>Expertise backfill inserts</td><td>DML</td><td>Copies all skills into expertise areas and all researcher skills into researcher expertise.</td></tr>
+<tr><td>378-446</td><td><code>TRG_SKILL_TO_EXPERTISE</code>, <code>TRG_RESEARCHER_SKILL_TO_EXPERTISE</code></td><td>PL/SQL triggers</td><td>Mirrors future skill and researcher-skill inserts/updates/deletes into expertise tables.</td></tr>
+<tr><td>456-481</td><td><code>PUBLICATION_AUTHOR</code> constraint, <code>PUBLICATION_CONTRIBUTION</code></td><td>DDL</td><td>Adds an exact author constraint and ternary contribution relation.</td></tr>
+<tr><td>488-510</td><td>Contribution backfill</td><td>DML</td><td>Backfills safe contributions only when a publication has an internal author and exactly one area.</td></tr>
+<tr><td>512-578</td><td><code>RCP_CONTRIBUTION_SYNC</code></td><td>PL/SQL package</td><td>Deletes stale contributions and inserts missing safe contributions for a publication.</td></tr>
+<tr><td>580-626</td><td><code>TRG_PUBLICATION_AUTHOR_CONTRIBUTION</code>, <code>TRG_PUBLICATION_AREA_CONTRIBUTION</code></td><td>Compound triggers</td><td>Collect changed publication IDs and reconcile contributions once per statement.</td></tr>
+<tr><td>629-661</td><td><code>PUBLICATION_REVIEW</code>, <code>TRG_PUBLICATION_REVIEW_ID</code></td><td>DDL + trigger</td><td>Faculty-only review table targeting an exact contribution; trigger supplies ID if omitted.</td></tr>
+<tr><td>665-681</td><td><code>PUBLICATION_CITATION</code> and backfill</td><td>DDL + DML</td><td>Weak annual citation entity; backfilled from legacy snapshots using max count by year.</td></tr>
+<tr><td>683-749</td><td><code>TRG_CITATION_TO_ANNUAL</code></td><td>Compound trigger</td><td>Maintains annual citation rows after citation-record insert/update/delete.</td></tr>
+<tr><td>752-814</td><td><code>RCP_ER_WORKFLOW</code></td><td>PL/SQL package</td><td>Database-first application workflow: blocks owner applications, closed posts, expired posts, duplicates, and missing posts before inserting an application.</td></tr>
+<tr><td>816</td><td><code>COMMIT</code></td><td>Transaction control</td><td>Commits the migration.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Views and PL/SQL search API</h2>
+<div class="tablewrap"><table class="wide-table">
+<thead><tr><th>Object</th><th>Lines</th><th>Purpose</th><th>Base objects read</th></tr></thead>
+<tbody>
+<tr><td><code>V_OPEN_RESEARCH_POSTS</code></td><td>6-13</td><td>Open, unexpired posts for directory browsing.</td><td><code>RESEARCH_POST</code>, <code>RESEARCHER_PROFILE</code>, <code>POST_REQUIRED_AREA</code>, <code>POST_REQUIRED_SKILL</code>.</td></tr>
+<tr><td><code>V_PUBLICATION_CITATION_SUMMARY</code></td><td>16-21</td><td>Publication summary with max citation count and author count.</td><td><code>PUBLICATION</code>, <code>CITATION_RECORD</code>, <code>PUBLICATION_AUTHOR</code>.</td></tr>
+<tr><td><code>V_CANONICAL_CITATION_SUMMARY</code></td><td>25-38</td><td>Canonical citation count preferring annual citations, falling back to legacy citation records.</td><td><code>PUBLICATION</code>, <code>PUBLICATION_CITATION</code>, <code>CITATION_RECORD</code>.</td></tr>
+<tr><td><code>V_RESEARCHER_SUMMARY</code></td><td>41-49</td><td>Active researcher summary and aggregate counts.</td><td><code>RESEARCHER_PROFILE</code>, <code>UNIVERSITY</code>, <code>RESEARCHER_AREA</code>, <code>RESEARCHER_SKILL</code>, <code>PUBLICATION</code>.</td></tr>
+<tr><td><code>V_ER_COMPLIANCE_SUMMARY</code></td><td>53-73</td><td>Enhanced-ER compliance summary per profile.</td><td><code>RESEARCHER_PROFILE</code>, subtype/contact/expertise/contribution tables.</td></tr>
+<tr><td><code>V_PENDING_CONTRIBUTION_AUDIT</code></td><td>77-100</td><td>Lists publications whose contribution relation should not be guessed automatically.</td><td><code>PUBLICATION</code>, <code>PUBLICATION_AUTHOR</code>, <code>PUBLICATION_AREA</code>.</td></tr>
+<tr><td><code>V_PUBLIC_RESEARCHER_DIRECTORY</code></td><td>104-122</td><td>Public visible researcher cards.</td><td><code>RESEARCHER_PROFILE</code>, <code>UNIVERSITY</code>, <code>RESEARCHER_AREA</code>, <code>RESEARCH_AREA</code>.</td></tr>
+<tr><td><code>V_PUBLICATION_DIRECTORY</code></td><td>124-135</td><td>Public active publication directory.</td><td><code>PUBLICATION</code>, <code>V_CANONICAL_CITATION_SUMMARY</code>.</td></tr>
+<tr><td><code>V_PUBLIC_OPEN_POST_DIRECTORY</code></td><td>137-149</td><td>Public visible open post directory.</td><td><code>RESEARCH_POST</code>, <code>RESEARCHER_PROFILE</code>.</td></tr>
+<tr><td><code>RCP_DIRECTORY_SEARCH.SEARCH_RESEARCHERS</code></td><td>151-166, 199-338</td><td>Filters public researchers by keyword, university, area, skill, designation, country, publication year range, citation range, sort, and page.</td><td>Directory view plus profile, area, skill, publication, author, citation summary objects.</td></tr>
+<tr><td><code>RCP_DIRECTORY_SEARCH.SEARCH_PUBLICATIONS</code></td><td>168-182, 340-445</td><td>Filters publications by keyword, author, area, type, venue, year range, citation range, researcher, sort, and page.</td><td>Publication directory view plus author, profile, publication area, research area, publication.</td></tr>
+<tr><td><code>RCP_DIRECTORY_SEARCH.SEARCH_OPEN_POSTS</code></td><td>184-194, 447-527</td><td>Filters open posts by keyword, area, skill, role type, deadline range, sort, and page.</td><td>Open-post directory view plus research post, required area/skill, research area, skill.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Runtime SQL in TypeScript</h2>
+<p>All browser-triggered SQL goes through server code. The browser never gets Oracle credentials. These are the files that execute SQL directly or call a helper that does.</p>
+<div class="tablewrap"><table class="extra-wide-table">
+<thead><tr><th>File</th><th>Lines</th><th>SQL operations</th><th>Main objects touched</th></tr></thead>
+<tbody>
+<tr><td><code>src/server/db-core.ts</code></td><td>57-124</td><td>Creates Oracle pool, sets current schema, exposes <code>query()</code> for read SQL and <code>withTransaction()</code> for transactional SQL.</td><td>All runtime SQL flows depend on this file.</td></tr>
+<tr><td><code>src/server/auth.ts</code></td><td>66-169</td><td>Registration INSERTs profile/session; login SELECTs profile then INSERTs session; session lookup SELECTs session/profile; logout UPDATEs session.</td><td><code>RESEARCHER_PROFILE</code>, <code>USER_SESSION</code>, <code>RCP_ID_SEQ</code>.</td></tr>
+<tr><td><code>src/server/admin.ts</code></td><td>6-24</td><td>Admin SELECT FOR UPDATE, profile/post UPDATE, audit INSERT.</td><td><code>RESEARCHER_PROFILE</code>, <code>RESEARCH_POST</code>, <code>AUDIT_LOG</code>.</td></tr>
+<tr><td><code>src/server/applications.ts</code></td><td>30-109</td><td>Post/application SELECT FOR UPDATE, application INSERT, application-publication INSERT, application status UPDATE, application list SELECT.</td><td><code>RESEARCH_POST</code>, <code>PUBLICATION</code>, <code>RESEARCH_APPLICATION</code>, <code>APPLICATION_PUBLICATION</code>, <code>NOTIFICATION</code>, <code>RESEARCHER_PROFILE</code>.</td></tr>
+<tr><td><code>src/server/connections.ts</code></td><td>23-88</td><td>Active profile SELECT, connection INSERT, connection SELECT FOR UPDATE, connection UPDATE, list SELECT.</td><td><code>RESEARCHER_PROFILE</code>, <code>CONNECTION</code>, <code>NOTIFICATION</code>.</td></tr>
+<tr><td><code>src/server/dashboard.ts</code></td><td>6-30</td><td>Aggregate count SELECTs from <code>DUAL</code> using scalar subqueries.</td><td><code>PUBLICATION</code>, <code>NOTIFICATION</code>, <code>CONNECTION</code>, <code>RESEARCH_APPLICATION</code>, <code>RESEARCHER_PROFILE</code>, <code>RESEARCH_POST</code>.</td></tr>
+<tr><td><code>src/server/imports.ts</code></td><td>19-112</td><td>Duplicate SELECTs; author identity SELECT; publication/author/area/citation/source INSERTs; dynamic research-area SELECT/INSERT.</td><td><code>PUBLICATION</code>, <code>EXTERNAL_PUBLICATION_SOURCE</code>, <code>PUBLICATION_AUTHOR</code>, <code>PUBLICATION_AREA</code>, <code>CITATION_RECORD</code>, <code>RESEARCH_AREA</code>, <code>RESEARCHER_PROFILE</code>.</td></tr>
+<tr><td><code>src/server/matching.ts</code></td><td>13-56</td><td>Area/skill SELECTs, recommended post matching SELECT, similar researcher SELECTs.</td><td><code>RESEARCHER_AREA</code>, <code>RESEARCHER_SKILL</code>, <code>RESEARCH_POST</code>, <code>POST_REQUIRED_AREA</code>, <code>POST_REQUIRED_SKILL</code>, <code>UNIVERSITY</code>, <code>SKILL</code>, <code>RESEARCH_AREA</code>.</td></tr>
+<tr><td><code>src/server/notifications.ts</code></td><td>14-56</td><td>Notification INSERT, list SELECT with actor join, single/all read UPDATE.</td><td><code>NOTIFICATION</code>, <code>RESEARCHER_PROFILE</code>.</td></tr>
+<tr><td><code>src/server/posts.ts</code></td><td>38-139</td><td>Requirement validation SELECTs, requirement DELETE/INSERT, post INSERT/UPDATE, post SELECT FOR UPDATE, applicant SELECT on close, detail/list SELECTs.</td><td><code>RESEARCH_AREA</code>, <code>SKILL</code>, <code>RESEARCH_POST</code>, <code>POST_REQUIRED_AREA</code>, <code>POST_REQUIRED_SKILL</code>, <code>RESEARCH_APPLICATION</code>, <code>RESEARCHER_PROFILE</code>.</td></tr>
+<tr><td><code>src/server/profile.ts</code></td><td>209-416</td><td>Profile/reference SELECTs, profile update transaction, university SELECT/INSERT, skill SELECT/INSERT, profile UPDATE, researcher-area/skill DELETE/INSERT.</td><td><code>RESEARCHER_PROFILE</code>, <code>UNIVERSITY</code>, <code>RESEARCHER_AREA</code>, <code>RESEARCH_AREA</code>, <code>RESEARCHER_SKILL</code>, <code>SKILL</code>, <code>PUBLICATION</code>, <code>PUBLICATION_AREA</code>, <code>PUBLICATION_AUTHOR</code>.</td></tr>
+<tr><td><code>src/server/publications.ts</code></td><td>105-248</td><td>Publication author/citation INSERTs, steward SELECT FOR UPDATE, publication INSERT/UPDATE/deactivation UPDATE, author/citation DELETEs, list/detail SELECTs.</td><td><code>PUBLICATION</code>, <code>PUBLICATION_AUTHOR</code>, <code>CITATION_RECORD</code>, <code>PUBLICATION_AREA</code>, <code>RESEARCH_AREA</code>.</td></tr>
+<tr><td><code>src/server/search.ts</code></td><td>11-213</td><td>Calls <code>RCP_DIRECTORY_SEARCH.SEARCH_RESEARCHERS</code>, <code>SEARCH_PUBLICATIONS</code>, and <code>SEARCH_OPEN_POSTS</code> with bind parameters and ref cursors.</td><td><code>RCP_DIRECTORY_SEARCH</code>, public directory views, and the tables those package procedures read.</td></tr>
+<tr><td><code>src/app/api/health/route.ts</code></td><td>7-10</td><td><code>SELECT 1 AS health FROM dual</code>.</td><td><code>DUAL</code>.</td></tr>
+<tr><td><code>scripts/import-researchers.ts</code></td><td>106-243</td><td>Bulk importer upserts researchers/universities, imports publications, deletes/reconciles old imported graph, count SELECTs.</td><td><code>RESEARCHER_PROFILE</code>, <code>UNIVERSITY</code>, publication graph tables, enhanced publication tables.</td></tr>
+<tr><td><code>scripts/test-cloud-connection.ts</code></td><td>6-19</td><td>Connection smoke test.</td><td><code>DUAL</code>.</td></tr>
+<tr><td><code>scripts/test-wallet-connection.ts</code></td><td>6-30</td><td>Wallet connection smoke test.</td><td><code>DUAL</code>.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Mutation patterns used by the backend</h2>
+<div class="tablewrap"><table class="wide-table">
+<thead><tr><th>Pattern</th><th>Example</th><th>Why it matters</th></tr></thead>
+<tbody>
+<tr><td><code>INSERT ... RETURNING ... INTO</code></td><td><code>auth.ts</code> lines 76-80; <code>publications.ts</code> lines 142-145; <code>posts.ts</code> lines 71-72.</td><td>Oracle returns the generated ID in the same round trip so the transaction can insert child rows immediately.</td></tr>
+<tr><td><code>SELECT ... FOR UPDATE</code></td><td><code>applications.ts</code> lines 34 and 59; <code>connections.ts</code> lines 47, 61, 72; <code>publications.ts</code> lines 127-128; <code>posts.ts</code> line 60.</td><td>Locks the row while checking ownership/status, preventing two requests from changing the same workflow state inconsistently.</td></tr>
+<tr><td>Delete-and-reinsert child rows</td><td><code>posts.ts</code> lines 47-54; <code>profile.ts</code> lines 387-412; <code>publications.ts</code> lines 182-185.</td><td>Simple replacement for many-to-many sets: delete the old set, insert the submitted set, all inside one transaction.</td></tr>
+<tr><td>Soft delete / deactivation</td><td><code>publications.ts</code> lines 196-203; <code>admin.ts</code> lines 19-22.</td><td>Records are hidden by status instead of physically deleted, preserving relationships and auditability.</td></tr>
+<tr><td>Named binds</td><td>Every runtime query uses <code>:name</code> binds.</td><td>Equivalent to JDBC <code>PreparedStatement</code>; user input is never concatenated into SQL text as a value.</td></tr>
+<tr><td>Dynamic placeholder list</td><td><code>posts.ts</code> lines 40 and 44; <code>profile.ts</code> lines 343-355 and 361.</td><td>Only placeholder names are generated from array indexes; actual values still pass as binds.</td></tr>
+<tr><td>Package call through ref cursor</td><td><code>search.ts</code> lines 127-150.</td><td>Lets Oracle own complex search predicates while TypeScript only passes validated filters.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Grants: what the app database user can do</h2>
+<p><code>RCP_APP</code> is the runtime user. It gets enough privileges to run the app, but not owner-level DDL. The script first revokes everything it knows about, then grants only the intended operations.</p>
+<div class="tablewrap"><table class="extra-wide-table">
+<thead><tr><th>Privilege</th><th>Objects</th><th>Source lines</th></tr></thead>
+<tbody>
+<tr><td><code>SELECT, INSERT, UPDATE</code></td><td><code>RESEARCHER_PROFILE</code>, <code>USER_SESSION</code>, <code>PUBLICATION</code>, <code>CONNECTION</code>, <code>RESEARCH_POST</code>, <code>RESEARCH_APPLICATION</code>, <code>NOTIFICATION</code>.</td><td>39-40, 46, 51-52, 55, 57</td></tr>
+<tr><td><code>SELECT, INSERT</code></td><td><code>UNIVERSITY</code>, <code>RESEARCH_AREA</code>, <code>SKILL</code>, <code>CITATION_RECORD</code>, <code>EXTERNAL_PUBLICATION_SOURCE</code>, <code>APPLICATION_PUBLICATION</code>, <code>AUDIT_LOG</code>.</td><td>41-42, 44, 49-50, 56, 58</td></tr>
+<tr><td><code>SELECT, INSERT, UPDATE, DELETE</code></td><td><code>RESEARCHER_AREA</code>, <code>RESEARCHER_SKILL</code>, <code>PUBLICATION_AUTHOR</code>, <code>PUBLICATION_AREA</code>, <code>POST_REQUIRED_AREA</code>, <code>POST_REQUIRED_SKILL</code>.</td><td>43, 45, 47-48, 53-54</td></tr>
+<tr><td><code>SELECT</code></td><td>Subtype/contact/expertise/contribution/review/annual-citation tables, public directory views, and <code>RCP_ID_SEQ</code>.</td><td>59-66, 69-72</td></tr>
+<tr><td><code>EXECUTE</code></td><td><code>RCP_ER_WORKFLOW</code>, <code>RCP_DIRECTORY_SEARCH</code>.</td><td>67-68</td></tr>
+<tr><td>No <code>DELETE</code></td><td><code>RESEARCHER_PROFILE</code> and <code>USER_SESSION</code>.</td><td>Verified by <code>05_database_tests.sql</code> lines 115-123.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="step">
+<h2>Setup, cleanup, and test SQL outside <code>database/</code></h2>
+<div class="tablewrap"><table class="wide-table">
+<thead><tr><th>File</th><th>SQL</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>scripts/setup-oracle-xe-dev.ps1</code></td><td>Embedded SQL*Plus: alter session container, drop users, create users, grant privileges, smoke SELECT.</td><td>Local Oracle XE bootstrap.</td></tr>
+<tr><td><code>scripts/create-rcp-owner.sql</code></td><td><code>CREATE USER RCP_OWNER</code>, grants create-session/table/view/sequence/procedure/trigger/type, exit.</td><td>Cloud owner user setup. The checked-in password text should be rotated if used anywhere real.</td></tr>
+<tr><td><code>scripts/create-rcp-app.sql</code></td><td><code>CREATE USER RCP_APP</code>, <code>GRANT CREATE SESSION</code>, exit.</td><td>Cloud runtime user setup. The checked-in password text should be rotated if used anywhere real.</td></tr>
+<tr><td><code>scripts/cleanup-demo-data.sql</code></td><td>Ordered DELETEs from notification/application/post/connection/publication/session/profile/reference tables, then commit.</td><td>Removes deterministic demo and integration-test records without dropping schema.</td></tr>
+<tr><td><code>tests/integration/*.test.ts</code></td><td>Integration tests call server SQL helpers and run cleanup UPDATE/INSERT/SELECT statements.</td><td>End-to-end database-backed behavior checks.</td></tr>
+<tr><td><code>package.json</code></td><td><code>import:researchers</code> and <code>test:integration</code> run TypeScript that executes SQL.</td><td>Command entry points for import and integration tests.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<nav class="pager" aria-label="Trace navigation">
+<a class="pager__btn pager__btn--ghost" href="deployment.html"><small>◀ Trace 11</small> Deployment</a>
+<a class="pager__btn" href="website-reference.html">Next: all website code <small>Appendix B ▶</small></a>
+</nav>
+</main>
+</div>
+<script src="vendor/highlight.min.js"></script>
+<script>hljs.highlightAll()</script>
+</body>
+</html>

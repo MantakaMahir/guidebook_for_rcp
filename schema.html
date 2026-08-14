@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>The schema · RCP Trace Guide</title>
-<meta name="description" content="Trace 06 of the RCP Trace Guide: twenty normalized tables, and the constraints that enforce the rules.">
+<meta name="description" content="Trace 06 of the RCP Trace Guide: the base schema, enhanced ER objects, and the constraints that enforce the rules.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
 <div class="shell">
 <aside class="stack-nav">
 <a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
-<p class="stack-nav__label">Call stack · 11 frames</p>
+<p class="stack-nav__label">Call stack · 13 frames</p>
 <nav aria-label="Trace steps">
 <a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
 <a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
@@ -25,6 +25,8 @@
 <a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
 <a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
 <a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+<a href="sql-reference.html"><span class="stack-nav__no">A</span>All SQL</a>
+<a href="website-reference.html"><span class="stack-nav__no">B</span>All website code</a>
 </nav>
 <p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
 </aside>
@@ -32,7 +34,7 @@
 <p class="trace__crumb">TRACE <b>06</b> / 11 · the schema</p>
 <p class="kicker">Trace 06 · The schema</p>
 <h1>The rules live in the tables, not in the code.</h1>
-<p class="lede">Twenty production tables, one sequence, and a wall of constraints. This is the DBMS coursework made physical: every business rule that must never be broken is declared in DDL, so the database refuses bad data even if a bug slips through the application.</p>
+<p class="lede">The base schema starts with twenty application tables and one sequence; the enhanced-ER migration adds nine more tables for classification, subtype, contact, expertise, contribution, review, and annual-citation modeling. This is the DBMS coursework made physical: every business rule that must never be broken is declared in DDL, so the database refuses bad data even if a bug slips through the application.</p>
 
 <section class="step">
 <h2>The territory, in five domains</h2>
@@ -137,7 +139,9 @@
     REFERENCES RESEARCHER_PROFILE (researcher_id),
   CONSTRAINT fk_ra_area FOREIGN KEY (area_id)
     REFERENCES RESEARCH_AREA (area_id),
-  ...
+  CONSTRAINT ck_ra_level CHECK (expertise_level BETWEEN 1 AND 5),
+  CONSTRAINT ck_ra_years CHECK (years_experience BETWEEN 0 AND 60),
+  CONSTRAINT ck_ra_primary CHECK (is_primary IN ('Y', 'N'))
 );</code></pre>
 </figure>
 <ul>
@@ -151,7 +155,7 @@
 <section class="step">
 <h2>Normalization, as practiced</h2>
 <p>The schema is normalized on purpose, and the payoff is visible in the data: university names exist once in <code>UNIVERSITY</code> and are referenced by ID everywhere, so renaming a university is one UPDATE instead of thousands. Research areas are a controlled vocabulary (<code>RESEARCH_AREA</code>) rather than free text, which is what makes faceted search and matching possible later. The cost: more JOINs: is paid in the views you meet in the next trace.</p>
-<div class="callout breakpoint"><p class="callout__tag">Breakpoint: the scripts run in order</p><p><code>database/</code> is numbered for a reason: <code>00_reset</code> drops everything, <code>01_schema</code> creates tables, <code>02_seed_data</code> fills them, <code>03</code> adds views and PL/SQL, <code>04</code> grants privileges to the runtime user, <code>05</code> tests the result. Each file assumes the previous ones ran: exactly like numbered migration scripts.</p></div>
+<div class="callout breakpoint"><p class="callout__tag">Breakpoint: the scripts run in order</p><p><code>database/</code> is numbered for readability, but the harness order matters most: <code>00_reset</code> drops everything, <code>01_schema</code> creates the base tables, <code>02_seed_data</code> fills them, <code>06_enhanced_er_migration</code> adds enhanced-ER objects, <code>03_views_and_plsql</code> creates views/packages that depend on those objects, <code>04_security</code> grants runtime privileges, and <code>05_database_tests</code> verifies the result.</p></div>
 </section>
 
 <nav class="pager" aria-label="Trace navigation">

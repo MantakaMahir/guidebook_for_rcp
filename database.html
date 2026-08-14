@@ -12,7 +12,7 @@
 <div class="shell">
 <aside class="stack-nav">
 <a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
-<p class="stack-nav__label">Call stack · 11 frames</p>
+<p class="stack-nav__label">Call stack · 13 frames</p>
 <nav aria-label="Trace steps">
 <a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
 <a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
@@ -25,6 +25,8 @@
 <a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
 <a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
 <a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+<a href="sql-reference.html"><span class="stack-nav__no">A</span>All SQL</a>
+<a href="website-reference.html"><span class="stack-nav__no">B</span>All website code</a>
 </nav>
 <p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
 </aside>
@@ -47,7 +49,7 @@ import oracledb, { type Pool } from 'oracledb'
 
 oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT</code></pre>
 </figure>
-<p>Line 1, <code>import 'server-only'</code>, is the fence from Trace 02: if any browser code ever imports this file, the build fails. Line 7 sets the default row shape: each row comes back as a JavaScript object keyed by column name (<code>{ FULL_NAME: '...' }</code>) instead of an array.</p>
+<p>Line 1, <code>import 'server-only'</code>, is the fence from Trace 02: if any browser code ever imports this file, the build fails. Line 7 sets the default row shape: each row comes back as a JavaScript object keyed by column name (<code>{ FULL_NAME: 'Ada Lovelace' }</code>) instead of an array.</p>
 </section>
 
 <section class="step">
@@ -84,7 +86,7 @@ oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT</code></pre>
 </figure>
 <ul>
 <li><strong>Credentials come from environment variables</strong>: <code>ORACLE_USER</code>, <code>ORACLE_PASSWORD</code>, <code>ORACLE_CONNECT_STRING</code>. They exist in the server process's memory, never in the code, never in the browser. <code>requiredEnv</code> throws if one is missing, so a misconfigured server fails fast at startup instead of failing mysteriously at query time.</li>
-<li><strong><code>poolMax: 4</code></strong>: at most four simultaneous connections. Oracle's Always Free tier caps concurrency, so the pool is sized to fit. When all four are busy, callers wait up to <code>queueTimeout</code> (10 seconds) for one to free up.</li>
+<li><strong><code>poolMax: 4</code></strong>: at most four simultaneous connections. The pool is deliberately small for the current app and cloud database. When all four are busy, callers wait up to <code>queueTimeout</code> (10 seconds) for one to free up.</li>
 <li><strong><code>stmtCacheSize: 30</code></strong>: parsed statements are cached so repeated queries skip the parse step. JDBC statement caching, same idea.</li>
 <li><strong>The pool promise lives on <code>globalThis</code></strong> so that in development, when modules get reloaded, the old pool is reused instead of leaked.</li>
 </ul>
@@ -150,7 +152,7 @@ oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT</code></pre>
 <figcaption><span class="code-frame__file">database/01_schema.sql</span><span class="code-frame__lines">line 4</span></figcaption>
 <pre><code class="language-sql">CREATE SEQUENCE RCP_ID_SEQ START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;</code></pre>
 </figure>
-<p>You saw it in action in Trace 04: <code>VALUES (RCP_ID_SEQ.NEXTVAL, :email, ...)</code>. Each <code>.NEXTVAL</code> atomically returns a fresh number that no other session will ever receive: concurrency-safe ID generation built into the engine.</p>
+<p>You saw it in action in Trace 04: <code>VALUES (RCP_ID_SEQ.NEXTVAL, :email, :passwordHash, :role, 'ACTIVE', :fullName)</code>. Each <code>.NEXTVAL</code> atomically returns a fresh number that no other session will ever receive: concurrency-safe ID generation built into the engine.</p>
 <div class="callout analogy"><p class="callout__tag">In Java terms</p><p>A sequence is a thread-safe counter owned by the database itself: <code>AtomicLong</code>, except it survives restarts, works across every connection at once, and never hands the same number to two transactions.</p></div>
 </section>
 

@@ -12,7 +12,7 @@
 <div class="shell">
 <aside class="stack-nav">
 <a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
-<p class="stack-nav__label">Call stack · 11 frames</p>
+<p class="stack-nav__label">Call stack · 13 frames</p>
 <nav aria-label="Trace steps">
 <a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
 <a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
@@ -25,6 +25,8 @@
 <a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
 <a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
 <a href="deployment.html" aria-current="page"><span class="stack-nav__no">11</span>Deployment</a>
+<a href="sql-reference.html"><span class="stack-nav__no">A</span>All SQL</a>
+<a href="website-reference.html"><span class="stack-nav__no">B</span>All website code</a>
 </nav>
 <p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
 </aside>
@@ -52,7 +54,6 @@ npm run dev        # start the Next.js dev server on http://localhost:3000</code
 <tr><td><code>TNS_ADMIN</code></td><td>Directory holding the extracted cloud wallet</td></tr>
 <tr><td><code>ORACLE_WALLET_PASSWORD</code></td><td>Unlocks the wallet's private key</td></tr>
 <tr><td><code>ORACLE_CLIENT_LIB_DIR</code></td><td>Oracle Client libraries for Thick mode</td></tr>
-<tr><td><code>SESSION_SECRET</code></td><td>Server-side secret for session handling</td></tr>
 </tbody>
 </table></div>
 <div class="callout breakpoint"><p class="callout__tag">Breakpoint</p><p>Environment files are in <code>.gitignore</code> for a reason. A password committed to a public repository is a leaked password forever: Git never forgets. The wallet folder is treated the same way.</p></div>
@@ -144,7 +145,7 @@ function initOracleClient(): Promise&lt;void&gt; {
 
 <nav class="pager" aria-label="Trace navigation">
 <a class="pager__btn pager__btn--ghost" href="testing.html"><small>◀ Trace 10</small> Testing</a>
-<a class="pager__btn" href="index.html">Restart <small>Trace 01 ▶</small></a>
+<a class="pager__btn" href="sql-reference.html">Next: all SQL <small>Appendix A ▶</small></a>
 </nav>
 </main>
 </div>

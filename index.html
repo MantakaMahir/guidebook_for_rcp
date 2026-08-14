@@ -13,7 +13,7 @@
 <div class="shell">
 <aside class="stack-nav">
 <a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
-<p class="stack-nav__label">Call stack · 11 frames</p>
+<p class="stack-nav__label">Call stack · 13 frames</p>
 <nav aria-label="Trace steps">
 <a href="index.html" aria-current="page"><span class="stack-nav__no">01</span>How the web works</a>
 <a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
@@ -26,6 +26,8 @@
 <a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
 <a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
 <a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+<a href="sql-reference.html"><span class="stack-nav__no">A</span>All SQL</a>
+<a href="website-reference.html"><span class="stack-nav__no">B</span>All website code</a>
 </nav>
 <p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
 </aside>
@@ -64,7 +66,7 @@ Accept-Language: en</code></pre>
 Content-Type: text/html; charset=utf-8
 
 &lt;!DOCTYPE html&gt;
-&lt;html lang="en"&gt; ... the rendered page ... &lt;/html&gt;</code></pre>
+&lt;html lang="en"&gt; rendered page content &lt;/html&gt;</code></pre>
 </figure>
 <div class="tablewrap"><table>
 <thead><tr><th>Status</th><th>Meaning</th><th>As a return value</th></tr></thead>
@@ -106,12 +108,12 @@ Content-Type: text/html; charset=utf-8
 <tbody>
 <tr><td><code>public static void main</code></td><td>A request handler: <code>export async function POST(request)</code></td></tr>
 <tr><td>Servlet / controller</td><td>Next.js API route files under <code>src/app/api/</code></td></tr>
-<tr><td>JDBC connection pool (<code>DataSource</code>)</td><td><code>oracledb.createPool(...)</code> in <code>db-core.ts</code></td></tr>
+<tr><td>JDBC connection pool (<code>DataSource</code>)</td><td><code>oracledb.createPool(config)</code> in <code>db-core.ts</code></td></tr>
 <tr><td><code>PreparedStatement</code> with <code>?</code> placeholders</td><td>SQL with named binds: <code>:email</code>, <code>:tokenHash</code></td></tr>
 <tr><td><code>interface</code> / <code>struct</code></td><td>TypeScript <code>interface</code> in <code>src/types/domain.ts</code></td></tr>
 <tr><td><code>#include</code> / <code>import</code></td><td><code>import</code>: same idea, module paths instead of headers</td></tr>
 <tr><td>JUnit assertions</td><td><code>node:test</code> + <code>node:assert/strict</code></td></tr>
-<tr><td><code>setAutoCommit(false)</code>, commit, rollback</td><td><code>withTransaction(...)</code> in <code>db-core.ts</code></td></tr>
+<tr><td><code>setAutoCommit(false)</code>, commit, rollback</td><td><code>withTransaction(callback)</code> in <code>db-core.ts</code></td></tr>
 <tr><td>Thread waiting on I/O</td><td><code>await</code>: the runtime parks the function until the result arrives</td></tr>
 </tbody>
 </table></div>
@@ -120,19 +122,21 @@ Content-Type: text/html; charset=utf-8
 
 <section class="step">
 <h2>How to use this guide</h2>
-<p>Eleven traces, each one a path through the stack. Every code block names its real file and line range in the <a href="https://github.com/MantakaMahir/research-collaboration-platform">RCP repository</a>: open the repo beside this page and read along. The sidebar is your call stack; the numbered steps on each page are the debugger stepping through one concern at a time.</p>
+<p>Eleven traces plus two appendices, each one a path through the stack. Every code block names its real file and line range in the <a href="https://github.com/MantakaMahir/research-collaboration-platform">RCP repository</a>: open the repo beside this page and read along. The sidebar is your call stack; the numbered steps on each page are the debugger stepping through one concern at a time.</p>
 <ul class="syllabus">
 <li><a href="index.html" aria-current="page"><span class="syllabus__no">TRACE 01</span><strong>How the web works</strong><span>Clients, servers, HTTP, and the vocabulary.</span></a></li>
 <li><a href="architecture.html"><span class="syllabus__no">TRACE 02</span><strong>The architecture</strong><span>Where every file lives and who is allowed to call whom.</span></a></li>
 <li><a href="frontend.html"><span class="syllabus__no">TRACE 03</span><strong>Frontend: React pages</strong><span>How a folder becomes a page and a function becomes HTML.</span></a></li>
 <li><a href="backend.html"><span class="syllabus__no">TRACE 04</span><strong>Backend: API routes</strong><span>Following one registration from form to database.</span></a></li>
 <li><a href="database.html"><span class="syllabus__no">TRACE 05</span><strong>Node ↔ Oracle</strong><span>The connection pool, binds, and transactions.</span></a></li>
-<li><a href="schema.html"><span class="syllabus__no">TRACE 06</span><strong>The schema</strong><span>Twenty tables, and the constraints that enforce the rules.</span></a></li>
+<li><a href="schema.html"><span class="syllabus__no">TRACE 06</span><strong>The schema</strong><span>Twenty base tables, nine enhanced tables, and the constraints that enforce the rules.</span></a></li>
 <li><a href="plsql.html"><span class="syllabus__no">TRACE 07</span><strong>Views &amp; triggers</strong><span>What Oracle itself does when your INSERT arrives.</span></a></li>
 <li><a href="security.html"><span class="syllabus__no">TRACE 08</span><strong>Security</strong><span>Password hashing, sessions, and injection defense.</span></a></li>
 <li><a href="features.html"><span class="syllabus__no">TRACE 09</span><strong>A feature end to end</strong><span>Research posts: create, publish, close, notify.</span></a></li>
 <li><a href="testing.html"><span class="syllabus__no">TRACE 10</span><strong>Testing</strong><span>Unit tests, integration tests, and the SQL harness.</span></a></li>
 <li><a href="deployment.html"><span class="syllabus__no">TRACE 11</span><strong>Deployment</strong><span>Local dev, the cloud wallet, and going live.</span></a></li>
+<li><a href="sql-reference.html"><span class="syllabus__no">APPENDIX A</span><strong>All SQL</strong><span>Every schema script, DDL/DML/PLSQL block, runtime query source, and SQL test.</span></a></li>
+<li><a href="website-reference.html"><span class="syllabus__no">APPENDIX B</span><strong>All website code</strong><span>Every page, component, API route, user flow, security boundary, and deployment behavior.</span></a></li>
 </ul>
 </section>
 

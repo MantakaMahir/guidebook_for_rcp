@@ -12,7 +12,7 @@
 <div class="shell">
 <aside class="stack-nav">
 <a class="stack-nav__brand" href="index.html">RCP Trace Guide<span>Research Collaboration Platform · field manual</span></a>
-<p class="stack-nav__label">Call stack · 11 frames</p>
+<p class="stack-nav__label">Call stack · 13 frames</p>
 <nav aria-label="Trace steps">
 <a href="index.html"><span class="stack-nav__no">01</span>How the web works</a>
 <a href="architecture.html"><span class="stack-nav__no">02</span>The architecture</a>
@@ -25,6 +25,8 @@
 <a href="features.html"><span class="stack-nav__no">09</span>A feature end to end</a>
 <a href="testing.html"><span class="stack-nav__no">10</span>Testing</a>
 <a href="deployment.html"><span class="stack-nav__no">11</span>Deployment</a>
+<a href="sql-reference.html"><span class="stack-nav__no">A</span>All SQL</a>
+<a href="website-reference.html"><span class="stack-nav__no">B</span>All website code</a>
 </nav>
 <p class="stack-nav__foot">Source repo<br><a href="https://github.com/MantakaMahir/research-collaboration-platform">research-collaboration-platform</a><br><br>Live app<br><a href="https://rcp-research.vercel.app">rcp-research.vercel.app</a></p>
 </aside>
@@ -68,10 +70,10 @@ export default async function ResearcherDirectory({ searchParams }: { searchPara
 <ul>
 <li><code>export default async function</code>: the framework calls this function on every request and sends whatever it returns to the browser.</li>
 <li><code>searchParams</code>: the query string (<code>?q=vision&amp;sort=name</code>) arrives as an object. URL parameters are just function arguments.</li>
-<li><code>Promise.all([...])</code>: run three queries concurrently instead of sequentially. Like starting three threads and joining them, written as one expression.</li>
+<li><code>Promise.all([first, second, third])</code>: run three queries concurrently instead of sequentially. Like starting three threads and joining them, written as one expression.</li>
 <li><code>@/server/search</code>: the <code>@/</code> alias means <code>src/</code>, so this imports <code>src/server/search.ts</code>. A server module, called directly, no HTTP hop needed.</li>
 </ul>
-<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>This one function is controller + service call + view. <code>searchResearchers()</code> is the service method; the <code>return &lt;main&gt;...&lt;/main&gt;</code> you will see next is the rendered JSP: except it is type-checked at compile time, and a typo in a column name fails the build instead of the user.</p></div>
+<div class="callout analogy"><p class="callout__tag">In Java terms</p><p>This one function is controller + service call + view. <code>searchResearchers()</code> is the service method; the returned <code>&lt;main&gt;</code> element is the rendered JSP equivalent: except it is type-checked at compile time, and a typo in a column name fails the build instead of the user.</p></div>
 </section>
 
 <section class="step">
@@ -88,7 +90,7 @@ export default async function ResearcherDirectory({ searchParams }: { searchPara
 <p>Read the three patterns that do most of the work in this codebase:</p>
 <ul>
 <li><code>{expression}</code>: interpolate a value. <code>{researcher.FULL_NAME}</code> prints the column.</li>
-<li><code>{list.map(item =&gt; ...)}</code>: loop. The <code>key=</code> prop gives each item a stable identity, like a primary key for the renderer.</li>
+<li><code>{list.map(item =&gt; &lt;Card key={item.id} /&gt;)}</code>: loop. The <code>key=</code> prop gives each item a stable identity, like a primary key for the renderer.</li>
 <li><code>{condition &amp;&amp; &lt;jsx&gt;}</code>: conditional render. If the left side is false, nothing is emitted. The empty state on the last line uses exactly this.</li>
 </ul>
 <p>Note <code>className</code> instead of <code>class</code>: <code>class</code> is a reserved word in TypeScript, so JSX renamed the attribute. Styling itself is plain CSS: one global stylesheet, <code>src/app/globals.css</code>, no CSS-in-JS machinery.</p>
@@ -143,7 +145,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 <ul>
 <li><code>useState('')</code>: a field that survives re-renders. Reading it gives the current value; calling the setter re-renders the component. Think of it as an instance variable that repaints the UI when written.</li>
 <li><code>onSubmit={submit}</code>: attaching a handler is just passing a function reference, like a Java listener.</li>
-<li><code>fetch('/api/auth/login', { method: 'POST', ... })</code>: the client side of the boundary from Trace 02: the browser calls the server over HTTP, sending JSON, and inspects the status code before trusting the body.</li>
+<li><code>fetch('/api/auth/login', { method: 'POST', body })</code>: the client side of the boundary from Trace 02: the browser calls the server over HTTP, sending JSON, and inspects the status code before trusting the body.</li>
 </ul>
 <div class="callout analogy"><p class="callout__tag">In Java terms</p><p>Server component ≈ code that runs in <code>main()</code> on the server at request time. Client component ≈ a Swing/JavaFX panel shipped to the user's machine: it keeps state, reacts to events, and talks back to the server over the network when it needs something it cannot compute itself.</p></div>
 </section>
