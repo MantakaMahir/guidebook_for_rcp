@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-Static HTML/CSS + local vendored highlight.js. Deployed to GitHub Pages at `mantakamahir.github.io/rcp-guide`. No build step, no framework — chosen deliberately so the team being taught can read every line of the guide site itself.
+Static HTML/CSS + local vendored highlight.js. Deployed to GitHub Pages at `mantakamahir.github.io/guidebook_for_rcp`. No build step, no framework — chosen deliberately so the team being taught can read every line of the guide site itself.
 
 ## Users
 
@@ -24,7 +24,7 @@ Not generic web documentation: every explanation is anchored to a real snippet f
 
 ## Operating Context
 
-Read at `https://mantakamahir.github.io/rcp-guide/` during team learning sessions, alongside the RCP source tree at `D:\DBMS\PROJECT MAIN`. Hosted on GitHub Pages from the `rcp-guide` repository.
+Read at `https://mantakamahir.github.io/guidebook_for_rcp/` during team learning sessions, alongside the RCP source tree at `D:\DBMS\PROJECT MAIN`. Hosted on GitHub Pages from the `guidebook_for_rcp` repository.
 
 ## Capabilities and Constraints
 

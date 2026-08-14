@@ -2,7 +2,7 @@
 
 A teaching site that walks the Research Collaboration Platform team through the full stack: browser to Oracle: using real code from the real repository.
 
-Live: https://mantakamahir.github.io/rcp-guide/
+Live: https://mantakamahir.github.io/guidebook_for_rcp/
 
 ## What this is
 
